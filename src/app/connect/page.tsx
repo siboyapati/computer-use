@@ -128,7 +128,7 @@ function ConnectInner() {
 
       {status === "no-resume" && (
         <div className="glass mt-12 w-full rounded-2xl p-6 text-center">
-          <AlertCircle className="mx-auto size-6 text-amber-400" />
+          <AlertCircle className="mx-auto size-6 text-amber-600 dark:text-amber-400" />
           <p className="mt-3 text-foreground">No résumé saved yet on this browser.</p>
           <p className="mt-1 text-sm text-muted-foreground">
             Drop your résumé on the home page first, then come back here.

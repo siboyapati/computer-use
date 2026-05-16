@@ -255,17 +255,22 @@ function PhaseStrip({ status }: { status: RunStatus }) {
 
 function BrowserPane({ liveUrl, status }: { liveUrl: string | null; status: RunStatus }) {
   const acting = status === "filling" || status === "submitting";
+  // The cloud browser surface — clean white card on light theme, slight
+  // glow when the agent is actively typing.
   return (
     <div
-      className={`relative flex min-h-0 flex-col overflow-hidden rounded-3xl border bg-black/60 ${
+      className={`relative flex min-h-0 flex-col overflow-hidden rounded-3xl border bg-card shadow-card transition-colors ${
         acting ? "border-primary/40" : "border-border"
-      } transition-colors`}
+      }`}
     >
       {acting && (
-        <div className="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-primary/30 [box-shadow:0_0_60px_rgba(212,255,80,0.18)_inset] animate-pulse" />
+        <div
+          className="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-primary/30 animate-pulse"
+          style={{ boxShadow: "0 0 60px color-mix(in oklch, var(--primary) 16%, transparent) inset" }}
+        />
       )}
       <BrowserChrome url={liveUrl} />
-      <div className="relative flex-1">
+      <div className="relative flex-1 bg-muted/30">
         {liveUrl ? (
           <iframe
             src={liveUrl}
@@ -287,13 +292,13 @@ function BrowserPane({ liveUrl, status }: { liveUrl: string | null; status: RunS
 
 function BrowserChrome({ url }: { url: string | null }) {
   return (
-    <div className="flex items-center gap-2 border-b border-border/60 bg-card/40 px-3 py-2 backdrop-blur">
+    <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-2">
       <div className="flex items-center gap-1.5">
-        <span className="size-2.5 rounded-full bg-red-400/70" />
-        <span className="size-2.5 rounded-full bg-amber-400/70" />
-        <span className="size-2.5 rounded-full bg-emerald-400/70" />
+        <span className="size-2.5 rounded-full bg-red-400/80" />
+        <span className="size-2.5 rounded-full bg-amber-400/80" />
+        <span className="size-2.5 rounded-full bg-emerald-400/80" />
       </div>
-      <div className="ml-2 flex-1 truncate rounded-md border border-border/40 bg-background/30 px-3 py-1 font-mono text-[11px] text-muted-foreground">
+      <div className="ml-2 flex-1 truncate rounded-md border border-border bg-background px-3 py-1 font-mono text-[11px] text-muted-foreground">
         live cloud session · {url ? new URL(url).hostname : "connecting…"}
       </div>
       {url && (
@@ -312,8 +317,8 @@ function BrowserChrome({ url }: { url: string | null }) {
 
 function LogPane({ events, status }: { events: AgentEvent[]; status: RunStatus }) {
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-card/30 backdrop-blur">
-      <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+    <div className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           <Sparkles className="size-3 text-primary" />
           Agent stream
@@ -324,7 +329,7 @@ function LogPane({ events, status }: { events: AgentEvent[]; status: RunStatus }
         <EventLog events={events} />
       </div>
       {status === "awaiting_review" ? (
-        <div className="border-t border-amber-500/30 bg-amber-500/5 px-4 py-2 font-mono text-[11px] text-amber-200/90">
+        <div className="border-t border-amber-500/40 bg-amber-50 px-4 py-2 font-mono text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200/90">
           ⏸ paused for review — click <span className="font-semibold">Submit for real</span> above
         </div>
       ) : status !== "submitted" && status !== "failed" && status !== "stopped" ? (
@@ -377,7 +382,7 @@ function CelebrationModal({
         </div>
 
         {meta?.screenshotUrl && (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-black/30">
+          <div className="mt-6 overflow-hidden rounded-2xl border border-border bg-muted">
             <Image
               src={meta.screenshotUrl}
               alt="Submission receipt"
@@ -392,7 +397,7 @@ function CelebrationModal({
         <div className="mt-6 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-xl border border-border bg-card/40 px-4 py-2 text-sm text-foreground/80 transition hover:text-foreground"
+            className="rounded-xl border border-border bg-card px-4 py-2 text-sm text-foreground/80 transition hover:text-foreground hover:bg-muted"
           >
             Keep looking
           </button>

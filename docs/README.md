@@ -1,28 +1,59 @@
-# AutoApply — Demo Documentation
+# AutoApply — Documentation
 
-A hosted demo of a vision-driven AI agent that fills and submits real job applications on Lever, Greenhouse, and Ashby.
+AutoApply is a vision-driven AI agent that fills and submits real job applications on Lever, Greenhouse, and Ashby. It ships as a **web app** (drop résumé, paste URL, watch agent fill) and a **Chrome extension** (one-click apply directly from a job page).
 
-The demo's pitch is the **live browser session embedded directly in the UI**. You watch a real Chromium instance in the cloud fill every field of a real application form while a streaming event log narrates what the agent is doing. When the agent clicks submit, you get a screenshot receipt.
+This documentation is organized to be read in order if you're new, or jumped into if you're looking up a specific feature.
 
 ---
 
-## Documentation
+## Reading order for newcomers
 
 | Doc | What's in it |
 |---|---|
-| [01 — Vision](./01-vision.md) | What we're building, who it's for, what success looks like |
-| [02 — Features & Rationale](./02-features.md) | Each feature, why it exists, what it deliberately doesn't do |
-| [03 — Architecture (HLD)](./03-architecture-hld.md) | High-level diagram, the three core components, request flow |
-| [04 — Architecture (LLD)](./04-architecture-lld.md) | File map, data shapes, code paths, key algorithms |
-| [05 — Tech Stack](./05-tech-stack.md) | Stack choices and why we reversed parts of the original plan |
-| [06 — Setup & Running](./06-setup.md) | Env vars, install, dev server, the W0 spike script |
+| [01 — Vision](./01-vision.md) | The pitch, the audience, what success looks like |
+| [02 — Features overview](./02-features.md) | What's in scope, what's deferred, and why |
+| [03 — Architecture (HLD)](./03-architecture-hld.md) | System diagram + request flow at a glance |
+| [04 — Architecture (LLD)](./04-architecture-lld.md) | File map, code paths, key algorithms |
+| [05 — Tech stack](./05-tech-stack.md) | Every dependency choice + why |
+| [06 — Setup & running](./06-setup.md) | Install, env, dev loop, smoke tests |
+
+---
+
+## Deep-dive: one doc per feature
+
+Each file in [`features/`](./features/) covers a single feature end-to-end: what it does, why it exists, the code path, gotchas, and how to verify it.
+
+- [Résumé parser](./features/resume-parser.md) — PDF → strict JSON via Claude's PDF input
+- [Agent runner](./features/agent-runner.md) — Stagehand + Steel orchestration
+- [Field mapping](./features/field-mapping.md) — deterministic dictionary → EEO heuristics → LLM fallback
+- [ATS adapters](./features/ats-adapters.md) — per-platform extraction + upload + submit
+- [Live browser stream](./features/live-stream.md) — Steel iframe + SSE event log
+- [Review-before-submit + Stop](./features/review-mode.md) — pause control, Submit-for-real button, abort
+- [Model toggle (Claude / Gemini)](./features/model-toggle.md) — runtime LLM choice
+- [Persistence (résumé + run history)](./features/persistence.md) — localStorage
+- [Chrome extension](./features/chrome-extension.md) — one-click apply from any supported job page
+
+---
+
+## Reference
+
+Strict contracts and shapes — what to look up, not what to read top to bottom.
+
+- [API routes](./reference/api.md) — every endpoint with request/response shapes
+- [Type definitions](./reference/types.md) — `Resume`, `AgentEvent`, `RunMetadata`, etc.
+- [Environment variables](./reference/env.md) — required + optional, web app + extension
 
 ---
 
 ## TL;DR
 
-- **What:** Drop résumé → paste job URL → watch agent fill + submit live → get receipt.
-- **Why this exists as a demo first, SaaS later:** the wow moment is unmistakable when you see the live browser working. Build the spike that proves the concept; the business model can follow.
-- **What it isn't:** not a SaaS. No auth, no payments, no usage caps, no dashboards, no analytics, no rate limiting. One user (you) at a time. By design — see [02 — Features](./02-features.md) for what's deferred and why.
-- **Stack:** Next.js 16 (App Router) + Stagehand v3 + Steel.dev + Claude Haiku 4.5. One Node process. No database, no Redis.
-- **State:** all in-memory. Refresh mid-run = run is lost. Acceptable for demo.
+- **Stack:** Next.js 16 + React 19 + Tailwind v4 + shadcn/ui + Motion + Stagehand v3 + Steel.dev + Claude Haiku 4.5 (default) / Gemini 3 Flash (toggle) + Plasmo (extension).
+- **State:** all in-memory in a single Node process. No DB, no Redis, no queue.
+- **Defaults:** review-before-submit ON (agent fills, you click Submit). Anthropic provider. Lever/Greenhouse/Ashby only.
+- **Out of scope:** auth, payments, multi-user, dashboards, Workday support. See [02 — Features](./02-features.md) for the full deferred list.
+
+---
+
+## Updating these docs
+
+If you change a feature, update its file in `features/` first. The top-level docs (01–06) summarize; they reference the deep-dives via links. If you add a new feature, create a new file in `features/` and link it from this README and [02 — Features](./02-features.md).

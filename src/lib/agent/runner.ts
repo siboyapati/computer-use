@@ -1,3 +1,30 @@
+/**
+ * Agent runner — the orchestrator that turns a parsed résumé + job URL
+ * into a real submitted application.
+ *
+ * High-level flow (see docs/features/agent-runner.md for the full diagram):
+ *   1. Pick the LLM provider (Claude Haiku 4.5 default, Gemini 3 Flash opt-in).
+ *   2. Provision a Steel.dev cloud Chromium session.
+ *   3. Connect Stagehand v3 via CDP.
+ *   4. Dispatch to the per-ATS adapter (Lever / Greenhouse / Ashby) to
+ *      extract the form schema.
+ *   5. Fill every field via mapField — deterministic → EEO heuristic →
+ *      LLM fallback. File uploads use Playwright's setInputFiles directly
+ *      (no LLM involvement).
+ *   6. Optionally pause for human review (default ON via reviewMode).
+ *   7. Click Submit. Capture screenshot. Clean up.
+ *
+ * Every step emits an AgentEvent to the in-memory pub/sub keyed by runId.
+ * The SSE endpoint (api/events/[runId]) pipes those events to the live UI.
+ *
+ * Cancellation: `bail(runId)` is called at every step boundary and throws
+ * a StoppedError if the user clicked Stop. Mid-`stagehand.act()` cancellation
+ * isn't supported by Stagehand v3, so Stop can take up to ~30s to take effect.
+ *
+ * Cost guards: MAX_FIELDS_TO_FILL caps the per-run field count. The
+ * field-mapper's LLM calls use prompt caching on the résumé block so
+ * 20 custom questions on the same form pay the résumé cost once.
+ */
 import { Stagehand } from "@browserbasehq/stagehand";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -219,6 +246,11 @@ export async function runApplication(args: RunArgs): Promise<void> {
       }
     }
 
+    // Last chance for the user to abort. A stop click during the
+    // awaiting_review pause is honored above; this guards the gap between
+    // "Submit for real" and the actual `act("Click submit")`.
+    bail(runId);
+
     updateMeta(runId, { status: "submitting" });
     emit(runId, "submitting", "Clicking Submit");
     await adapter.submit(stagehand);
@@ -304,14 +336,27 @@ function xpathLiteral(s: string): string {
   return `concat(${parts.join(",\"'\",")})`;
 }
 
+/**
+ * Resolve a label string to an input/textarea and fill it.
+ *
+ * The selector chain runs cheapest-first: cross-element `for=`/`id`
+ * pairing, then nested input, then following-sibling, then aria/placeholder
+ * fallbacks. The first selector that matches at least one element wins.
+ *
+ * Returns `false` if nothing matched — the runner then falls back to
+ * `stagehand.act("Fill the X field with: Y")`, which uses the LLM.
+ */
 async function tryFillByLabel(stagehand: Stagehand, label: string, value: string): Promise<boolean> {
   const page = stagehand.context.activePage();
   if (!page) return false;
   const trimmed = label.replace(/\s*\*\s*$/, "").trim(); // drop trailing "*"
   const lit = xpathLiteral(trimmed);
   const candidates = [
-    // <label for="...">Label</label>... matched input/textarea by `for`
-    `xpath=//label[normalize-space()=${lit}]/@for/following::*[@id=string(.)][1]`,
+    // <label for="X">Label</label> + <input id="X"> — looks up the id via
+    // the label's `for` attribute. Note: chaining `following::` off
+    // `/@for` would be invalid XPath 1.0 (you can't continue an axis from
+    // an attribute node), so we use a predicate-based lookup instead.
+    `xpath=//*[@id=//label[normalize-space()=${lit}]/@for]`,
     // Input nested inside the label
     `xpath=//label[normalize-space()=${lit}]//input | //label[normalize-space()=${lit}]//textarea`,
     // Input immediately following the label
@@ -362,6 +407,13 @@ async function trySelectByLabel(
   return false;
 }
 
+/**
+ * Strip PII from a value before it ships over the SSE stream.
+ *
+ * The event log is in-memory but emitted to whoever holds the runId. Email
+ * addresses, phone numbers, and full URLs are the obvious PII; long
+ * free-text answers get truncated for UI sanity.
+ */
 function redact(value: string): string {
   if (value.length <= 4) return value;
   if (value.includes("@")) {
@@ -369,6 +421,13 @@ function redact(value: string): string {
     const [domainName, ...rest] = domain.split(".");
     const tld = rest.length > 0 ? `.${rest.join(".")}` : "";
     return `${user.slice(0, 2)}***@${domainName.slice(0, 1)}***${tld}`;
+  }
+  // Phone numbers: 7+ digits with optional separators and country code
+  if (/^[\d\s().+-]{7,}$/.test(value) && /\d{4,}/.test(value)) {
+    const digitsOnly = value.replace(/\D/g, "");
+    if (digitsOnly.length >= 7) {
+      return `${digitsOnly.slice(0, 3)}-***-${digitsOnly.slice(-2)}`;
+    }
   }
   if (/^https?:/i.test(value)) {
     try {

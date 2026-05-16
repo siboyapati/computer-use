@@ -1,3 +1,19 @@
+/**
+ * Field mapper — given a single form field + the parsed résumé + the job
+ * URL, return the value to fill into that field.
+ *
+ * Three-tier strategy, cheapest-first:
+ *   1. Deterministic dictionary (regex on the label → résumé key).
+ *      Zero tokens. Covers name/email/phone/LinkedIn/etc.
+ *   2. EEO heuristic for demographic fields. Returns an explicit
+ *      "decline" option if available, else empty string. NEVER falls
+ *      back to a real demographic answer — that's a privacy violation.
+ *   3. LLM fallback. One Claude call per question, with the résumé in a
+ *      cacheable system block (cache_control: ephemeral) so 20 questions
+ *      on the same form pay the résumé token cost once.
+ *
+ * See docs/features/field-mapping.md for the full algorithm + verification.
+ */
 import Anthropic from "@anthropic-ai/sdk";
 import type { Resume } from "./types";
 
@@ -93,11 +109,37 @@ Return ONLY the value to enter into this field. No preamble, no quotes, no comme
 const DECLINE_REGEX = /decline|prefer not|do not wish|don.?t wish|rather not|not.*say|not.*answer|wish.*disclose/i;
 const EEO_REGEX = /race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun|orientation|identify/i;
 
+/**
+ * For an EEO/demographic dropdown, find an option that explicitly declines
+ * to answer (e.g. "Prefer not to say", "Decline to disclose").
+ *
+ * Returns `undefined` if the list has nothing decline-shaped — DO NOT fall
+ * back to the last option in the list, because that could be a real
+ * demographic answer ("Black or African American", "Veteran of the U.S.
+ * Armed Forces") and silently submitting it on the user's behalf is a
+ * privacy violation. An empty value means "leave the field blank", which
+ * the user can manually correct from the live browser pane (review mode)
+ * if needed.
+ */
 function findDeclineOption(options: string[] | undefined): string | undefined {
   if (!options || options.length === 0) return undefined;
-  return options.find((o) => DECLINE_REGEX.test(o)) ?? options[options.length - 1];
+  return options.find((o) => DECLINE_REGEX.test(o));
 }
 
+/**
+ * Map a single form field to a value to fill in.
+ *
+ * Three tiers, ordered cheapest-first:
+ *   1. Deterministic dictionary — regex on the label → key into the
+ *      résumé. Zero LLM tokens. Covers name/email/phone/LinkedIn/etc.
+ *   2. EEO heuristic — for demographic fields, return the explicit
+ *      "decline" option or empty string. Privacy-respecting default.
+ *   3. LLM fallback — single Claude call with the résumé in a cacheable
+ *      system block, answer grounded in the résumé only.
+ *
+ * If the result is an empty string, the runner skips filling that field
+ * (emits a "skipped" event so the user sees why).
+ */
 export async function mapField(
   field: FormField,
   resume: Resume,

@@ -17,6 +17,11 @@ import {
   type HistoryItem,
   type StoredResume,
 } from "@/lib/storage";
+import {
+  SAMPLE_RESUME,
+  SAMPLE_FILE_NAME,
+  loadSamplePdfBase64,
+} from "@/lib/sample-data";
 
 type Action =
   | { type: "PARSED"; resume: AppState["resume"]; pdfBase64: string; fileName: string }
@@ -225,6 +230,18 @@ export default function Page() {
                 return;
               }
               dispatch({ type: "PARSED", resume: parsed.data, pdfBase64, fileName });
+            }}
+            onUseSample={async () => {
+              // The sample flow ships a pre-parsed Resume + a static PDF.
+              // Skips the Anthropic call — instant jump to Confirm.
+              const pdfBase64 = await loadSamplePdfBase64();
+              dispatch({
+                type: "USE_STORED",
+                resume: SAMPLE_RESUME,
+                pdfBase64,
+                fileName: SAMPLE_FILE_NAME,
+              });
+              toast.success("Sample résumé loaded");
             }}
             onError={(m) => toast.error(m)}
           />

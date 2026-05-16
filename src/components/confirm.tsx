@@ -130,10 +130,10 @@ export function Confirm({
           </div>
 
           {!reviewMode && (
-            <div className="flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/90">
-              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-400" />
+            <div className="flex items-start gap-2 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-500/20 dark:bg-amber-500/5 dark:text-amber-200/90">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <div>
-                <span className="font-medium text-amber-100">
+                <span className="font-medium text-amber-950 dark:text-amber-100">
                   Heads up — auto-submit is on.
                 </span>{" "}
                 The agent will click submit without asking. Use a posting you actually want to apply to.

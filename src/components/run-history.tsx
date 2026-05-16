@@ -44,7 +44,7 @@ function HistoryCard({ item }: { item: HistoryItem }) {
       className={`glass group block flex-shrink-0 rounded-2xl border ${tone} transition`}
       style={{ width: 180 }}
     >
-      <div className="relative h-20 overflow-hidden rounded-t-2xl bg-black/30">
+      <div className="relative h-20 overflow-hidden rounded-t-2xl bg-muted">
         {item.screenshotUrl ? (
           <Image
             src={item.screenshotUrl}
@@ -52,10 +52,10 @@ function HistoryCard({ item }: { item: HistoryItem }) {
             width={360}
             height={160}
             unoptimized
-            className="h-full w-full object-cover object-top opacity-90 transition group-hover:opacity-100"
+            className="h-full w-full object-cover object-top opacity-95 transition group-hover:opacity-100"
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-muted-foreground/40">
+          <div className="flex h-full items-center justify-center text-muted-foreground/50">
             <span className="font-mono text-[10px] uppercase tracking-widest">no shot</span>
           </div>
         )}

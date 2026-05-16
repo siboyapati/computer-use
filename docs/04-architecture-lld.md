@@ -1,10 +1,34 @@
 # 04 — Architecture (Low-Level Design)
 
-## File map
+The HLD ([03 — Architecture HLD](./03-architecture-hld.md)) is the map. This is the terrain: every file you'll touch, every data shape, every API contract, and the algorithms that matter.
+
+For feature-by-feature deep dives, see [`features/`](./features/). For exact API request/response shapes, see [reference/api.md](./reference/api.md).
+
+---
+
+## Repository layout
 
 ```text
 computer-use/
 ├── docs/                                  # this folder
+├── extension/                             # Chrome extension (Plasmo, separate package)
+│   ├── package.json
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── tsconfig.json
+│   ├── assets/icon.png                    # 512x512, rasterized by Plasmo
+│   └── src/
+│       ├── background.ts                  # service worker
+│       ├── popup.tsx                      # toolbar popup (Tailwind)
+│       ├── options.tsx                    # options page (Tailwind)
+│       ├── styles.css                     # Tailwind directives + Fraunces import
+│       ├── contents/
+│       │   └── overlay.ts                 # floating button content script (vanilla, shadow DOM)
+│       └── lib/
+│           ├── types.ts                   # Resume + StoredConfig + message types
+│           ├── detect.ts                  # ATS hostname detection (mirror of web app)
+│           ├── storage.ts                 # chrome.storage.local wrapper
+│           └── api.ts                     # /api/start client, URL builders
 ├── spike.ts                               # W0 standalone validation script
 ├── .env.local.example                     # required env vars
 ├── next.config.ts
@@ -13,54 +37,64 @@ computer-use/
     ├── app/
     │   ├── layout.tsx                     # dark mode + Fraunces/Inter/JetBrains Mono
     │   ├── globals.css                    # warm dark palette, oklch, .glass + .font-display
-    │   ├── page.tsx                       # 3-state reducer + SSE wiring
+    │   ├── page.tsx                       # 3-state reducer + SSE wiring + deep-link
+    │   ├── connect/
+    │   │   └── page.tsx                   # extension pairing handshake page
     │   └── api/
     │       ├── parse-resume/route.ts      # POST: PDF → Resume JSON
-    │       ├── start/route.ts             # POST: kicks off run
-    │       └── events/[runId]/route.ts    # GET: SSE stream
+    │       ├── start/route.ts             # POST: kicks off run, returns { runId, liveUrl, ats }
+    │       ├── events/[runId]/route.ts    # GET: SSE stream
+    │       ├── runs/[runId]/route.ts      # GET: meta (for deep-link hydrate)
+    │       ├── stop/[runId]/route.ts      # POST: flip stop flag
+    │       └── submit-now/[runId]/route.ts# POST: flip submit-now flag (review mode)
     ├── components/
-    │   ├── landing.tsx                    # state 1: drop zone
-    │   ├── confirm.tsx                    # state 2: card + URL + model toggle
-    │   ├── live-run.tsx                   # state 3: split UI + celebration
-    │   ├── event-log.tsx                  # terminal-style streaming log
-    │   ├── resume-card.tsx                # glassy parsed-résumé card
+    │   ├── landing.tsx                    # state 1: drop zone + stored-résumé CTA + history strip
+    │   ├── confirm.tsx                    # state 2: parsed-résumé card + URL + model + review toggle
+    │   ├── live-run.tsx                   # state 3: split iframe + event stream + Stop/Submit-for-real
+    │   ├── event-log.tsx                  # streaming terminal-style log with per-kind icons
+    │   ├── resume-card.tsx                # glassy parsed-résumé card (reused in landing + confirm)
+    │   ├── run-history.tsx                # horizontal strip of recent runs with thumbnails
     │   └── ui/                            # shadcn primitives
     └── lib/
         ├── client-types.ts                # AppState + reducer types (client-safe)
+        ├── storage.ts                     # localStorage helpers (résumé + history)
+        ├── cors.ts                        # corsHeaders / preflightResponse / withCors
         ├── utils.ts                       # cn() (shadcn)
         └── agent/
-            ├── types.ts                   # Resume schema, ATS, LLMProvider, AgentEvent
-            ├── events.ts                  # Map<runId, EventEmitter> + emit/finish/prune
+            ├── types.ts                   # Resume schema, ATS, LLMProvider, AgentEvent, RunMetadata
+            ├── events.ts                  # Map<runId,...> + emit/finish/prune/stop/submit
             ├── steel.ts                   # Steel SDK wrapper (createSession, release)
             ├── resume-parser.ts           # Anthropic PDF input + tool_use
             ├── field-mapper.ts            # deterministic + EEO + LLM-fallback mapping
-            ├── runner.ts                  # Stagehand orchestration
+            ├── runner.ts                  # Stagehand orchestration + ATS dispatch
             └── adapters/
                 ├── lever.ts               # Lever extract / upload / submit
                 ├── greenhouse.ts          # Greenhouse extract / upload / submit
                 └── ashby.ts               # Ashby extract / upload / submit
 ```
 
+---
+
 ## Key data shapes
 
 ### `Resume` (canonical answer source)
 
-Defined in [src/lib/agent/types.ts](../src/lib/agent/types.ts) as a Zod schema. Shape:
+Defined as a Zod schema in [src/lib/agent/types.ts](../src/lib/agent/types.ts). Strict shape:
 
 ```ts
 {
   personal: { fullName, firstName, lastName, email, phone, location, linkedin, github, website },
   headline: string,
   summary: string,
-  experience: Array<{ company, title, startDate, endDate, location, description }>,
-  education:  Array<{ school, degree, field, startDate, endDate }>,
-  skills:     string[],
-  projects:   Array<{ name, description, url }>,
+  experience:     Array<{ company, title, startDate, endDate, location, description }>,
+  education:      Array<{ school, degree, field, startDate, endDate }>,
+  skills:         string[],
+  projects:       Array<{ name, description, url }>,
   certifications: string[],
 }
 ```
 
-All string fields default to `""`, all arrays default to `[]`. Zod validates this server-side after Anthropic returns the `tool_use` block and client-side after the API response.
+All string fields default to `""`, all arrays default to `[]`. Zod validates the Anthropic `tool_use` output server-side AND the API response on the client. The extension mirrors this type in [extension/src/lib/types.ts](../extension/src/lib/types.ts) — kept in sync manually (~50 lines, not worth a workspace).
 
 ### `AgentEvent` (SSE payload)
 
@@ -69,10 +103,10 @@ All string fields default to `""`, all arrays default to `[]`. Zod validates thi
   id: uuid,
   runId: uuid,
   kind: "started" | "navigated" | "form_extracted" | "field_filled"
-      | "file_uploaded" | "submitting" | "submitted" | "screenshot"
-      | "error" | "completed",
-  ts: number,           // Date.now()
-  message: string,      // user-facing one-liner
+      | "file_uploaded" | "awaiting_review" | "submitting"
+      | "submitted" | "screenshot" | "stopped" | "error" | "completed",
+  ts: number,                  // Date.now()
+  message: string,             // user-facing one-liner
   data?: Record<string, unknown>,
 }
 ```
@@ -81,46 +115,74 @@ All string fields default to `""`, all arrays default to `[]`. Zod validates thi
 
 ```ts
 {
-  runId, jobUrl, ats,
-  liveUrl: string | null,              // Steel session viewer URL
-  status: "starting" | "navigating" | "filling" | "submitting" | "submitted" | "failed",
-  company: string | null,              // populated after form_extracted
-  startedAt, finishedAt: number | null,
-  screenshotUrl: string | null,        // data:image/png;base64 after submit
+  runId, jobUrl, ats: "lever" | "greenhouse" | "ashby",
+  liveUrl: string | null,                      // Steel sessionViewerUrl
+  status: "starting" | "navigating" | "filling"
+        | "awaiting_review" | "submitting"
+        | "submitted" | "failed" | "stopped",
+  company: string | null,                      // populated after form_extracted
+  startedAt: number,
+  finishedAt: number | null,
+  screenshotUrl: string | null,                // data:image/png;base64,…
   error: string | null,
 }
 ```
 
-## Code paths (request flow)
+### Extension `StoredConfig`
 
-### A — User drops PDF
+In [extension/src/lib/types.ts](../extension/src/lib/types.ts). Persisted to `chrome.storage.local` under key `autoapply.config.v1`:
 
+```ts
+type StoredConfig =
+  | { paired: false }
+  | {
+      paired: true,
+      apiBase: string,                         // e.g. "http://localhost:3000"
+      resume: Resume,
+      pdfBase64: string,                       // up to ~7 MB
+      fileName: string,
+      pairedAt: number,
+    };
 ```
+
+---
+
+## Code paths
+
+### A — User drops PDF on web app
+
+```text
 Landing.handleFile(file)
-  → POST /api/parse-resume (multipart)
+  → POST /api/parse-resume (multipart/form-data)
       → parse-resume/route.ts
-        → parseResumeFromPdf(buf)
-            → anthropic.messages.create({ model, tools: [save_resume], tool_choice: {tool} })
+        → parseResumeFromPdf(buf)                  // src/lib/agent/resume-parser.ts
+            → anthropic.messages.create({
+                model: claude-haiku-4-5,
+                tools: [save_resume],
+                tool_choice: { type: "tool", name: "save_resume" },
+              })
             → ResumeSchema.parse(toolUse.input)
         → returns { resume, pdfBase64 }
   → dispatch({ type: "PARSED", resume, pdfBase64, fileName })
+  → saveResume(...) writes to localStorage          // src/lib/storage.ts
   → phase = "confirm"
 ```
 
-Time: ~3–7 seconds (Anthropic PDF input).
+Time: ~3–7 seconds for a typical résumé.
 
 ### B — User clicks Start
 
-```
-Confirm.onStart(jobUrl, provider)
-  → POST /api/start { resume, pdfBase64, jobUrl, provider }
+```text
+Confirm.onStart(jobUrl, provider, reviewMode)
+  → POST /api/start { resume, pdfBase64, jobUrl, provider, reviewMode }
       → start/route.ts
-        → StartSchema.safeParse(body)
+        → StartSchema.safeParse(body)               // strict shape check
         → detectATS(jobUrl) → "lever" | "greenhouse" | "ashby" | null
+        → if google && no GOOGLE_GENERATIVE_AI_API_KEY → 400
         → runId = randomUUID()
-        → createRun({ runId, jobUrl, ats })            // events.ts → Map
-        → void runApplication({ ... })                 // fire-and-forget
-        → poll getRun(runId).meta.liveUrl every 100ms (max 8s)
+        → createRun({ runId, jobUrl, ats })         // src/lib/agent/events.ts
+        → void runApplication({ ... })              // fire-and-forget
+        → waitForLiveUrl(runId, 8000)               // polls .meta.liveUrl
         → return { runId, liveUrl, ats }
   → dispatch({ type: "STARTED", runId, liveUrl, ats })
   → phase = "live"
@@ -128,116 +190,188 @@ Confirm.onStart(jobUrl, provider)
 
 ### C — Live Run reads events
 
-```
+```text
 useEffect on state.runId:
   → new EventSource("/api/events/" + runId)
-      → events/[runId]/route.ts:
+      → events/[runId]/route.ts
         → getRun(runId)
-        → for each event in run.log: send("agent", event)       // replay
+        → for event in run.log: send("agent", event)    // replay any events emitted before subscribe
         → send("meta", run.meta)
-        → run.emitter.on("event", e => send("agent", e))
-        → run.emitter.on("done", () => send("done") + close)
-  → on each "agent" msg: dispatch({ type: "EVENT", event })
-  → on each "meta" msg:  dispatch({ type: "META", meta })
-  → on "done": EventSource.close()
+        → run.emitter.on("event", e => send("agent", e) + send("meta", latest))
+        → run.emitter.on("done", () => send("meta", final) + send("done") + close)
+  → "agent" msg → dispatch({ type: "EVENT", event })
+  → "meta" msg  → dispatch({ type: "META", meta })
+  → "done"      → EventSource.close()
 ```
 
-### D — runApplication (server-side, async)
+### D — `runApplication` server-side
 
-```
-runApplication({ runId, resume, pdfBase64, jobUrl, ats, provider })
+[src/lib/agent/runner.ts](../src/lib/agent/runner.ts):
+
+```text
+runApplication({ runId, resume, pdfBase64, jobUrl, ats, provider, reviewMode })
   ├─ resolveStagehandModel(provider) → { modelName, apiKey }
-  ├─ emit "started"
-  ├─ session = await createSession()                      // steel.ts
+  ├─ emit "started"  (with provider/modelName/reviewMode in data)
+  ├─ session = await createSession()                    // src/lib/agent/steel.ts
+  ├─ bail(runId)                                         // throws StoppedError if stop was requested
   ├─ updateMeta(runId, { liveUrl: session.sessionViewerUrl })
   ├─ emit "started" with liveUrl
   ├─ stagehand = new Stagehand({ env: "LOCAL", cdpUrl: session.websocketUrl, model })
   ├─ await stagehand.init()
-  ├─ emit "navigated" → page.goto(jobUrl) → emit "navigated" (loaded)
-  ├─ form = await adapter.extract(stagehand)             // adapters/{ats}.ts
+  ├─ bail
+  ├─ emit "navigated" → page.goto(jobUrl, { waitUntil: "load", timeoutMs: 30_000 })
+  ├─ page.waitForSelector("form, [role=form], input[type=email], input[type=file]", 10_000)
+  ├─ form = await adapter.extract(stagehand)            // adapters/<ats>.ts
   ├─ updateMeta { company, status: "filling" }
   ├─ emit "form_extracted" with fields[]
-  ├─ resumePdfPath = write base64 to OS temp file
-  ├─ for each fillable field:
-  │     answer = await mapField(field, resume, jobUrl)   // field-mapper.ts
+  ├─ resumePdfPath = write base64 to tmp file
+  ├─ for each fillable field (capped at MAX_FIELDS_TO_FILL = 40):
+  │     bail
+  │     answer = await mapField(field, resume, jobUrl)  // field-mapper.ts
+  │     if !answer.value → emit "field_filled" skipped; continue
   │     await fillSingleField(stagehand, field, value)
-  │     emit "field_filled"
-  ├─ adapter.upload(stagehand, resumePdfPath)            // setInputFiles bypass
-  ├─ emit "file_uploaded"
+  │     emit "field_filled" with redacted value
+  ├─ if form.resumeFieldLabel:
+  │     ok = await adapter.upload(stagehand, resumePdfPath)
+  │     emit "file_uploaded" { ok }
+  ├─ if reviewMode:
+  │     updateMeta { status: "awaiting_review" }; emit "awaiting_review"
+  │     await waitForSubmitOrStop(runId, 5 * 60_000)
+  │     if stop or timeout → emit "stopped" + finishRun "stopped"; return
   ├─ updateMeta { status: "submitting" }; emit "submitting"
-  ├─ adapter.submit(stagehand)
-  ├─ await page.waitForLoadState("networkidle", 15s).catch(noop)
-  ├─ screenshotBuf = await page.screenshot({ fullPage: true })
-  ├─ updateMeta { screenshotUrl: "data:image/png;base64,…", status: "submitted" }
+  ├─ await adapter.submit(stagehand)
+  ├─ page.waitForLoadState("networkidle", 15_000).catch(noop)
+  ├─ screenshot = await page.screenshot({ fullPage: true })
+  ├─ updateMeta { screenshotUrl: data-url, status: "submitted" }
   ├─ emit "screenshot" + "submitted"
   └─ finishRun(runId, "submitted")
+catch StoppedError:
+  ├─ emit "stopped", finishRun "stopped"
 catch err:
   ├─ emit "error", finishRun "failed"
 finally:
   ├─ stagehand.close()
-  └─ releaseSession(session.id)
+  ├─ releaseSession(session.id)
+  └─ rm -rf tmpdir/autoapply/<runId>
 ```
 
-## Field-mapping algorithm
+### E — Field mapping algorithm
 
-In `src/lib/agent/field-mapper.ts`:
+In [src/lib/agent/field-mapper.ts](../src/lib/agent/field-mapper.ts):
 
 ```text
 mapField(field, resume, jobUrl) {
-  // 1. Deterministic dictionary (cheap, ~zero tokens)
-  for each (regex, key) in DETERMINISTIC:
-    if regex.test(field.label) and key(resume) is non-empty:
-      return { value: key(resume), reasoning: "matched resume directly" }
+  1. Deterministic dictionary — DETERMINISTIC array of { regex, key }:
+       /^(full\s*)?name$/i  → r.personal.fullName
+       /first\s*name/i      → r.personal.firstName
+       /last\s*name/i       → r.personal.lastName
+       /^e?-?mail/i         → r.personal.email
+       /phone|mobile|cell/i → r.personal.phone
+       /linked\s*in/i       → r.personal.linkedin
+       /github/i            → r.personal.github
+       /portfolio|website/i → r.personal.website
+       /^(city|location|address)/i  → r.personal.location
+       /current\s*(company|employer)/i → r.experience[0]?.company
+       /current\s*(title|role|position)/i → r.experience[0]?.title
+       /^school|university|college/i → r.education[0]?.school
+       /^degree/i           → r.education[0]?.degree
+       /^headline|tagline/i → r.headline
 
-  // 2. EEO / demographic — prefer "Decline to answer"
-  if /race|ethnic|gender|disab|veteran|hispanic|latino|pronoun/i.test(field.label):
-    decline = field.options?.find(/decline|prefer not|do not wish/i)
-    return { value: decline ?? "", reasoning: "EEO question — declined by default" }
+  2. EEO heuristic — if field.label matches
+       /race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun|orientation|identify/i
+     pick first option matching
+       /decline|prefer not|do not wish|don.?t wish|rather not|not.*say|wish.*disclose/i
+     fall back to the LAST option if no decline-style match (avoids submitting blank required field).
 
-  // 3. LLM fallback (single Claude call, system prompt includes the resume JSON)
-  return answerCustomQuestion(field, resume, jobUrl)
+  3. LLM fallback — single Anthropic call:
+       - system: cacheable résumé block (cache_control: ephemeral)
+       - user: "Form field label: <label>\nField type: <type>\nOptions: <list>\n\nReturn ONLY the value."
 }
 ```
 
-Deterministic regexes cover: full/first/last name, email, phone, LinkedIn, GitHub, portfolio, location, current company/title, school, degree, headline.
+The resume block ships once per run thanks to `cache_control: ephemeral` — 20 custom questions on the same form pay the résumé token cost once.
 
-## Fill strategy per field type
+### F — Fill strategy per field type
 
-`fillSingleField()` in `runner.ts`:
+`fillSingleField()` in [runner.ts](../src/lib/agent/runner.ts):
 
-1. For `text/email/phone/url/textarea` types: try `tryFillByLabel()` first — walks a candidate selector chain (`label:has-text() >> .. >> input`, `[aria-label*=]`, `[placeholder*=]`). If any selector resolves to a visible element, `locator.fill(value)`.
-2. If deterministic fill fails: fall back to Stagehand `act("Fill the X field with: Y")` which uses the accessibility tree.
+1. For `text|email|phone|url|textarea`: `tryFillByLabel()` first — XPath chain anchored to `<label normalize-space()="X">`:
+   - `//label[normalize-space()=X]/@for/following::*[@id=string(.)][1]` (label `for` → input)
+   - `//label[normalize-space()=X]//input | //label[…]//textarea` (input nested in label)
+   - `//label[…]/following::input[1]` (input immediately after label)
+   - `input[aria-label*="X" i]`, `textarea[aria-label*="X" i]`, `input[placeholder*="X" i]`
+2. For `select`: `trySelectByLabel()` — XPath anchored, then `locator.selectOption(value)`.
+3. Fallback for everything: `stagehand.act("Fill the '<label>' field with: <value>")`.
 
-For `file` types we never use the LLM — call `page.locator("input[type=file]").setInputFiles(path)` directly, with per-ATS selector preferences in `adapters/{ats}.ts`.
+For file types we never use the LLM — adapter-specific `setInputFiles` chain (see [features/ats-adapters.md](./features/ats-adapters.md)).
 
-## ATS adapters (the only ATS-specific code)
+---
 
-Each adapter implements three functions:
+## ATS adapters
+
+Each adapter ([lever.ts](../src/lib/agent/adapters/lever.ts), [greenhouse.ts](../src/lib/agent/adapters/greenhouse.ts), [ashby.ts](../src/lib/agent/adapters/ashby.ts)) implements three functions:
 
 ```ts
-extract(stagehand): Promise<ExtractedForm>     // calls stagehand.extract with an ATS-tuned prompt
-upload(stagehand, pdfPath): Promise<boolean>   // try a chain of selectors for file input
-submit(stagehand): Promise<void>               // stagehand.act with ATS-tuned button name
+extract(stagehand): Promise<ExtractedForm>     // ATS-tuned prompt for stagehand.extract
+upload(stagehand, pdfPath): Promise<boolean>   // CSS selector chain → setInputFiles
+submit(stagehand): Promise<void>               // deterministic CSS/XPath → click; act() fallback
 ```
 
-Differences captured in the extraction prompt:
-- **Lever:** "Skip section headers and links. Include text inputs, textareas, dropdowns, radio groups, checkboxes, file uploads."
-- **Greenhouse:** explicit mention of `intl-tel-input` and `react-select` for custom questions; demographic dropdowns.
-- **Ashby:** "Target by labels and ARIA roles, not class names — class-hashed SPA."
+The differences captured in the extraction prompt:
 
-If a new ATS needed adding, the adapter is ~50 lines.
+- **Lever**: "Include text inputs, textareas, dropdowns, radio groups, checkboxes, file uploads. Skip section headers and links."
+- **Greenhouse**: explicit mention of `intl-tel-input` phone fields + `react-select` dropdowns.
+- **Ashby**: "Target by labels and ARIA roles, not class names — class-hashed SPA."
 
-## Concurrency, lifetimes, and cleanup
+If you add a new ATS, the adapter is ~50 lines. Wire it up in `ADAPTERS` in [runner.ts](../src/lib/agent/runner.ts) and add the host to `detectATS` in [types.ts](../src/lib/agent/types.ts).
 
-- **One Stagehand session per runId.** No pooling.
-- **In-memory pub/sub:** `events.ts` keeps a `Map<runId, { meta, emitter, log }>`. `pruneOldRuns()` is defined but not called yet — the demo's expected volume doesn't need it.
-- **Tempdir cleanup:** résumé PDF is written to `os.tmpdir()/autoapply/{runId}/resume.pdf`. Not cleaned up after the run; relies on OS temp cleanup. (Acceptable for demo.)
-- **SSE:** `events/[runId]/route.ts` removes its listeners on `done`. If the client disconnects without `done`, the listeners stay attached until the next event triggers them (then the `controller.enqueue` throws and we close). Not a leak in practice.
+---
+
+## API surface
+
+Full request/response shapes are in [reference/api.md](./reference/api.md). Quick overview:
+
+| Method | Path | What |
+|---|---|---|
+| POST | `/api/parse-resume` | PDF → `Resume` JSON |
+| POST | `/api/start` | Kicks off a run, returns `{ runId, liveUrl, ats }` |
+| GET | `/api/events/[runId]` | SSE stream of agent events |
+| GET | `/api/runs/[runId]` | One-shot read of `RunMetadata` (used by deep-link hydration) |
+| POST | `/api/stop/[runId]` | Sets `control.stopRequested = true` |
+| POST | `/api/submit-now/[runId]` | Sets `control.submitRequested = true` |
+
+Every route has an `OPTIONS` handler that returns CORS preflight headers via [src/lib/cors.ts](../src/lib/cors.ts) so the Chrome extension can call them.
+
+---
+
+## Concurrency, lifetimes, cleanup
+
+- **One Stagehand session per `runId`.** No pooling.
+- **In-memory pub/sub.** [events.ts](../src/lib/agent/events.ts) maintains `Map<runId, { meta, emitter, log, control }>`. `pruneOldRuns()` runs on a 5-minute interval (timer is `unref()`-ed so it doesn't block process exit).
+- **Tempdir cleanup.** Résumé PDF lives at `os.tmpdir()/autoapply/<runId>/resume.pdf`. The `finally` block in `runApplication` does `rm -rf` on the per-run directory.
+- **SSE handler.** Removes its EventEmitter listeners on `done`. If the client disconnects without `done`, the listeners stay attached until the next event triggers them — then the `controller.enqueue` throws and we close.
+- **Stagehand close.** Best-effort. If it fails, the Steel session still gets released independently.
+
+---
+
+## Web app changes for the extension
+
+These exist purely to make the extension work:
+
+- **[src/lib/cors.ts](../src/lib/cors.ts)** — permissive CORS helper, applied to every public API route.
+- **[src/app/api/runs/[runId]/route.ts](../src/app/api/runs/[runId]/route.ts)** — GET endpoint so a fresh tab (opened by the extension) can hydrate its UI without subscribing to SSE first.
+- **[src/app/connect/page.tsx](../src/app/connect/page.tsx)** — pairing handshake page; reads `?ext_id=`, calls `chrome.runtime.sendMessage`.
+- **`useEffect` in [src/app/page.tsx](../src/app/page.tsx)** — reads `?runId=` query param on mount, hydrates `RunMetadata`, dispatches `STARTED`, strips the param from the URL.
+
+See [features/chrome-extension.md](./features/chrome-extension.md#web-app-integration) for the full pairing + handoff diagram.
+
+---
 
 ## What's deliberately not implemented
 
-- **Retries on Anthropic / Gemini errors** — single attempt; the user re-runs.
-- **Rate limiting / cost cap** — single user (you). See plan.
-- **Storage** — Postgres / Supabase. PDFs round-trip via base64; nothing persists.
-- **Auth** — none. Anyone with the URL can start a run. Acceptable for hosted demo (single user).
-- **Pagination of multi-step forms** — Lever, Greenhouse, Ashby are single-page. Adding Workday would require a multi-step loop.
+- **Retries on Anthropic/Gemini errors** — single attempt; user re-runs.
+- **Per-IP rate limiting / cost cap** — single user. Per-run field cap (40) is the only guard.
+- **Server-side run persistence** — all state in-memory. SaaS phase = Supabase Postgres.
+- **Auth** — anyone with `runId` can read the SSE. Acceptable for single-user demo.
+- **Multi-step / paginated form support** — Workday-style. Hard-blocked by `detectATS`.
+- **True mid-`act()` cancellation** — `bail()` only fires at step boundaries; a single long `act()` call can take ~30 s to halt.

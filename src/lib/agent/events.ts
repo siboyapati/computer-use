@@ -1,3 +1,23 @@
+/**
+ * In-memory pub/sub keyed by runId.
+ *
+ * Each RunRecord holds:
+ *   - meta:    the current RunMetadata (status, liveUrl, screenshot, etc.)
+ *   - emitter: an EventEmitter that fires "event" on each new AgentEvent
+ *              and "done" when the run terminates.
+ *   - log:     append-only list of every event emitted so far. SSE
+ *              handlers replay this on reconnect.
+ *   - control: stopRequested / submitRequested flags polled by the runner.
+ *
+ * No persistence. If the Node process restarts, every in-flight run is
+ * lost. Acceptable for the single-user demo; SaaS phase would back this
+ * with Postgres + Redis.
+ *
+ * Pruning runs every 5 minutes (timer auto-scheduled on first createRun).
+ * The pruner drops both finished runs older than 30 min AND
+ * started-but-unfinished runs older than 2 hours (catches crashed runs
+ * that never called finishRun).
+ */
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, AgentEventKind, RunMetadata } from "./types";
@@ -109,10 +129,28 @@ export function isSubmitRequested(runId: string): boolean {
   return runs.get(runId)?.control.submitRequested ?? false;
 }
 
-export function pruneOldRuns(olderThanMs = 1000 * 60 * 30): void {
-  const cutoff = Date.now() - olderThanMs;
+/**
+ * Drop old run records from the in-memory map.
+ *
+ * Two predicates, both required to keep memory bounded:
+ *
+ *   - Finished runs older than `olderThanMs` (default 30 min) are dropped.
+ *     This is the normal case.
+ *   - Started-but-unfinished runs older than `crashedAfterMs` (default 2
+ *     hours) are dropped. This catches runs that crashed in a way that
+ *     never called `finishRun` — without this branch the map grows forever.
+ */
+export function pruneOldRuns(
+  olderThanMs = 1000 * 60 * 30,
+  crashedAfterMs = 1000 * 60 * 60 * 2,
+): void {
+  const now = Date.now();
+  const finishedCutoff = now - olderThanMs;
+  const crashedCutoff = now - crashedAfterMs;
   for (const [id, record] of runs.entries()) {
-    if (record.meta.finishedAt && record.meta.finishedAt < cutoff) {
+    if (record.meta.finishedAt && record.meta.finishedAt < finishedCutoff) {
+      runs.delete(id);
+    } else if (!record.meta.finishedAt && record.meta.startedAt < crashedCutoff) {
       runs.delete(id);
     }
   }

@@ -2,125 +2,163 @@
 
 ## One-paragraph summary
 
-A single Next.js process on Railway hosts a three-state web UI and three API endpoints. The UI walks the user through Landing → Confirm → Live Run. The Live Run page subscribes via Server-Sent Events to an in-memory pub/sub keyed by `runId`. A background async task in the same Node process drives a Stagehand session against a cloud Chromium provided by Steel.dev; that session's `liveUrl` is embedded in the page via `<iframe>`. Claude Haiku 4.5 (or Gemini 3 Flash) supplies the reasoning. No queue, no database, no Redis.
+A single Next.js process on Railway hosts the web UI, the API routes, and the agent runner. The UI walks the user through three states (Landing → Confirm → LiveRun) and subscribes via Server-Sent Events to an in-memory pub/sub keyed by `runId`. The runner spawns a Stagehand session against a Steel.dev cloud Chromium and drives the form fill, emitting events at every step. The Steel session's `liveUrl` is embedded in the page via `<iframe>` so the user watches the agent live. A Chrome extension (built with Plasmo) is a second client: it injects a floating "Apply with AutoApply" button on supported job pages and hands off to the same `/api/start` endpoint after a one-time résumé-pairing handshake. No database, no Redis, no queue.
+
+---
 
 ## System diagram
 
 ```text
-                       ┌────────────────────────────────┐
-                       │           Browser (you)         │
-                       └────────────────┬────────────────┘
-                                        │
-                                        ▼
-   ┌──────────────────────────────────────────────────────────────────┐
-   │                  Next.js process on Railway                       │
-   │                                                                   │
-   │   src/app/page.tsx ─ 3-state UI                                  │
-   │     • Landing      → POST /api/parse-resume                      │
-   │     • Confirm      → POST /api/start                             │
-   │     • LiveRun      → GET  /api/events/:runId (SSE)               │
-   │                                                                   │
-   │   src/app/api/                                                    │
-   │     • parse-resume/route.ts                                       │
-   │         └─ Anthropic PDF input → strict JSON via tool_use        │
-   │     • start/route.ts                                              │
-   │         └─ Creates runId + in-memory record                       │
-   │            Fires runApplication() async, returns liveUrl          │
-   │     • events/[runId]/route.ts                                     │
-   │         └─ Pipes EventEmitter into text/event-stream              │
-   │                                                                   │
-   │   src/lib/agent/                                                  │
-   │     • events.ts ─ Map<runId, EventEmitter> + log replay           │
-   │     • runner.ts ─ Stagehand orchestration                         │
-   │     • adapters/{lever,greenhouse,ashby}.ts ─ per-ATS specifics    │
-   │     • field-mapper.ts ─ deterministic + LLM fallback              │
-   │                                                                   │
-   └───────────────────────────────┬─────────────────────────────────-─┘
-                                   │
-                                   │ (CDP WebSocket)
-                                   ▼
-                ┌──────────────────────────────────────┐
-                │   Steel.dev cloud Chromium session    │
-                │   • websocketUrl    → Stagehand CDP   │
-                │   • sessionViewerUrl → <iframe>       │
-                └──────────────────────────────────────┘
-                                   │
-                                   ▼
-                ┌──────────────────────────────────────┐
-                │   ATS application page                │
-                │   (Lever / Greenhouse / Ashby)        │
-                └──────────────────────────────────────┘
+              ┌────────────────────────────────────────────────────────────┐
+              │                       Web app (Next.js)                    │
+              │                                                            │
+              │   src/app/page.tsx — reducer-driven 3-state UI             │
+              │     • Landing        ─→ POST /api/parse-resume             │
+              │     • Confirm        ─→ POST /api/start                    │
+              │     • LiveRun        ─→ GET  /api/events/:runId  (SSE)     │
+              │                        POST /api/stop/:runId               │
+              │                        POST /api/submit-now/:runId         │
+              │                                                            │
+              │   /connect             — extension pairing handshake       │
+              │   /?runId=<id>         — deep-link into LiveRun            │
+              │                                                            │
+              │   src/app/api/                                             │
+              │     parse-resume   → Anthropic PDF input → strict JSON     │
+              │     start          → creates runId, fires agent async      │
+              │     events/[id]    → SSE stream of agent events            │
+              │     runs/[id]      → GET meta for hydrate-on-load          │
+              │     stop/[id]      → flips stop flag                       │
+              │     submit-now/[id]→ flips submit flag in review mode      │
+              │                                                            │
+              │   src/lib/agent/                                           │
+              │     runner.ts      — Stagehand orchestration               │
+              │     adapters/{lever,greenhouse,ashby}.ts                   │
+              │     field-mapper.ts                                        │
+              │     events.ts      — in-memory pub/sub Map<runId,…>        │
+              └──────────────────────────────────┬─────────────────────────┘
+                                                 │
+                          (CDP WebSocket: stagehand.init with cdpUrl)
+                                                 ▼
+                          ┌─────────────────────────────────────────┐
+                          │      Steel.dev cloud Chromium session   │
+                          │  • websocketUrl     (Stagehand connects)│
+                          │  • sessionViewerUrl (iframed in LiveRun)│
+                          └─────────────────────────────────────────┘
+                                                 │
+                                                 ▼
+                          ┌─────────────────────────────────────────┐
+                          │   ATS application page                  │
+                          │   (Lever / Greenhouse / Ashby)          │
+                          └─────────────────────────────────────────┘
 
-   ┌──────────────────┐        ┌──────────────────────┐
-   │  Anthropic API   │◀──────▶│  Google Gemini API    │
-   │  • PDF input     │        │  • Stagehand option   │
-   │  • Haiku 4.5     │        │  • via @ai-sdk/google │
-   └──────────────────┘        └──────────────────────┘
+
+  Chrome extension (Plasmo, separate package in extension/):
+  ───────────────────────────────────────────────────────────
+       ┌──────────────────────────────┐
+       │ Lever / GH / Ashby job page  │
+       │  content script overlay.ts   │
+       │  injects floating button     │
+       └──────────────┬───────────────┘
+                      │ click
+                      ▼
+       ┌──────────────────────────────┐
+       │  background.ts (SW)          │
+       │   reads stored résumé        │
+       │   POST /api/start            │
+       │   chrome.tabs.create(        │
+       │     `${api}/?runId=<id>`)    │
+       └──────────────┬───────────────┘
+                      │ new tab
+                      ▼
+       ┌──────────────────────────────┐
+       │  Web app reads ?runId=,      │
+       │  hydrates via GET /api/runs, │
+       │  subscribes to SSE,          │
+       │  renders existing LiveRun.   │
+       └──────────────────────────────┘
 ```
 
-## The three core components
+---
 
-### 1. Résumé Parser
+## The 5 core components
 
-**Input:** PDF (≤5 MB) uploaded as `multipart/form-data` to `POST /api/parse-resume`.
+### 1 · Résumé Parser
 
-**Process:**
-1. Read bytes from the form.
-2. Forward to Anthropic Messages API with the PDF as a `document` content block.
-3. Force `tool_use` with a single `save_resume` tool whose `input_schema` is the [Résumé Zod schema](../src/lib/agent/types.ts).
-4. Validate the returned JSON with `ResumeSchema.parse(toolUse.input)`.
+PDF → strict `Resume` JSON via Anthropic's PDF input + `tool_use`. One API call, no PDF parsing library. Returns `{ resume, pdfBase64 }` so the PDF round-trips back to the client and rides along on subsequent `/api/start` requests without server-side storage.
 
-**Output:** `{ resume: Resume, pdfBase64: string }`. The PDF base64 round-trips back to the client so the agent can re-upload it later without storing files server-side.
+Deep dive: [features/resume-parser.md](./features/resume-parser.md).
 
-### 2. Agent Runner
+### 2 · Agent Runner
 
-**Trigger:** `POST /api/start` with `{ resume, pdfBase64, jobUrl, provider }`.
+The orchestrator. Picks the model based on `provider`, opens a Steel session, hands the CDP URL to Stagehand, drives the per-ATS adapter through extract → fill → upload → (optional pause for review) → submit → screenshot. Emits events to the in-memory pub/sub at every step. Handles stop and submit-now control flags. Cleans up Steel sessions + temp PDF files in `finally`.
 
-**Process:**
-1. Detect ATS from URL hostname → reject if unsupported.
-2. Generate `runId`, register an in-memory `EventEmitter` keyed by it.
-3. Fire `runApplication(...)` without `await` (long-running, ~30–120s).
-4. Wait up to 8s for the Steel `liveUrl` to populate so it's in the start response (otherwise the UI has to wait a tick).
-5. Return `{ runId, liveUrl, ats }`.
+Deep dive: [features/agent-runner.md](./features/agent-runner.md).
 
-Inside `runApplication`:
-1. Create a Steel.dev session (`websocketUrl`, `sessionViewerUrl`).
-2. Initialize Stagehand with `env: "LOCAL"` and `localBrowserLaunchOptions.cdpUrl = websocketUrl`. Model = `anthropic/claude-haiku-4-5` or `google/gemini-3-flash-preview`.
-3. Navigate to the job URL.
-4. Call the ATS adapter's `extract()` to get `{ company, fields[], resumeFieldLabel }`.
-5. For each non-file field: map to a value via `mapField()` (deterministic dictionary, then EEO heuristics, then LLM fallback). Fill via `tryFillByLabel()` (label-anchored selector chain) or Stagehand `act()`.
-6. Upload the résumé PDF via Playwright's `setInputFiles()` (LLM not involved).
-7. Click submit via Stagehand `act()`.
-8. Wait for network idle, capture full-page screenshot.
-9. Emit `submitted` + `completed` events.
+### 3 · Live UI
 
-### 3. Live UI
+Three states, one page, no router. State 1 is the drop zone. State 2 shows the parsed résumé as a glassy card with URL input + model toggle + review-mode toggle. State 3 is the hero: split layout with the Steel iframe on the left, a streaming event log on the right, a phase strip on top, and Stop / Submit-for-real buttons in the header.
 
-**Layout:** single `page.tsx` with a `useReducer` state machine. Three phases:
-- `landing` → Landing component (drop zone + hero)
-- `confirm` → Confirm component (parsed résumé card + URL input + model toggle)
-- `live` → LiveRun component (split-screen: Steel iframe + event log + phase strip + celebration)
+Deep dive: [features/live-stream.md](./features/live-stream.md).
 
-**Event flow:**
-- On entering `live`, page opens `new EventSource('/api/events/:runId')`.
-- Server-side SSE handler replays the run's log (so reconnects don't miss events), subscribes to the `EventEmitter`, and pipes new events as `event: agent\ndata: {...}\n\n`. A separate `event: meta` line carries run metadata.
-- Client dispatches `EVENT` and `META` actions into the reducer; `LiveRun` re-renders.
+### 4 · Persistence (client-only)
+
+`localStorage` carries the parsed résumé and the last 5 finished runs (with screenshot thumbnails) so a browser refresh doesn't wipe state. There is **no server-side persistence** — the demo is single-user and stateless.
+
+Deep dive: [features/persistence.md](./features/persistence.md).
+
+### 5 · Chrome Extension
+
+A separate Plasmo package in `extension/`. Pairs with the web app once (résumé pushed via `chrome.runtime.sendMessage` from the `/connect` page), then injects a floating button on every Lever/Greenhouse/Ashby posting. The background service worker calls `/api/start` with the stored résumé + the page's URL and opens a new tab pointing at `/?runId=X`.
+
+Deep dive: [features/chrome-extension.md](./features/chrome-extension.md).
+
+---
+
+## Request flow (happy path, web app)
+
+1. **Drop résumé** → `POST /api/parse-resume` → Claude PDF input + tool use → strict JSON returned + base64 PDF.
+2. **Paste URL + click Start** → `POST /api/start` with `{ resume, pdfBase64, jobUrl, provider, reviewMode }`.
+3. Server creates `runId`, registers an in-memory `EventEmitter`, fires `runApplication(...)` *without awaiting* (long-running, runs in the same process).
+4. Server polls for the Steel `liveUrl` for up to 8 seconds, then returns `{ runId, liveUrl, ats }`.
+5. Client jumps to phase `"live"` and opens `new EventSource('/api/events/<runId>')`.
+6. The SSE handler replays any events already emitted (so the run won't miss what happened during the 8s wait), then pipes new events. Each event is `event: agent` + `data: { ... }`; meta updates come as `event: meta`.
+7. Runner navigates, extracts fields, fills each one (deterministic match → EEO heuristic → LLM fallback), uploads the résumé via `setInputFiles`, and either submits immediately or pauses if `reviewMode` was true.
+8. On review-mode pause: status flips to `awaiting_review`. User clicks **Submit for real** → `POST /api/submit-now/:runId` → flag flips → runner proceeds.
+9. Screenshot captured + emitted as `data:image/png;base64,…` in the meta, run finishes, confetti modal renders.
+
+## Request flow (Chrome extension)
+
+1. Extension already paired (one-time `/connect` handshake — see [features/chrome-extension.md](./features/chrome-extension.md#pairing)).
+2. User loads a Lever/GH/Ashby posting. Content script `overlay.ts` checks storage, sees pairing, injects floating button.
+3. User clicks → `chrome.runtime.sendMessage({ type: "apply", jobUrl })` to the service worker.
+4. Service worker `POST ${apiBase}/api/start` with the stored résumé and `reviewMode: true`.
+5. Receives `{ runId, liveUrl, ats }`, opens `chrome.tabs.create({ url: '${apiBase}/?runId=${runId}' })`.
+6. The new tab is just the web app with a deep-link param. The web app's `useEffect` on mount reads `?runId=`, fetches `GET /api/runs/:runId` for meta, dispatches `STARTED`, and the rest of the flow is identical to the web app path.
+
+---
 
 ## Why this shape
 
-- **One Node process, no queue:** for a single-user demo, in-memory pub/sub is fast and trivial. Adding Redis or a worker would buy us nothing here.
-- **SSE over WebSocket:** SSE auto-reconnects, works through proxies, and Next.js has no special handling needed — just a `ReadableStream` in the route handler.
-- **Iframe the Steel `sessionViewerUrl`:** Steel exposes a publicly viewable session URL designed to be embedded. No screencast pipeline to build.
-- **PDF bytes round-trip via base64:** keeps the server stateless. If we wanted history or restart, we'd need Supabase Storage; for the demo we don't.
+- **One Node process, no queue.** Single-user, in-memory pub/sub is fast and trivial. Adding Redis would buy us nothing yet.
+- **SSE over WebSocket.** Auto-reconnects, works through proxies, no Next.js special handling — just a `ReadableStream` in the route handler.
+- **Iframe Steel's `sessionViewerUrl`.** Steel publishes a public, embed-able session URL — no screencast pipeline to build.
+- **PDF bytes round-trip via base64.** Keeps the server stateless. Costs ~7 MB on the wire per `/api/start`; acceptable for one user.
+- **Extension as a second client, not a parallel implementation.** The agent code lives in one place. The extension is a button + a `fetch`.
+- **No deep-link auth or token.** Whoever has the `runId` can view the run. Acceptable for the single-user demo; revisit if we publish to the Chrome Web Store.
 
-## Failure modes to know
+---
 
-| Failure | What happens |
-|---|---|
-| Steel session fails to start | Run never gets `liveUrl`. `/api/start` returns `liveUrl: null` after 8s. UI shows "Provisioning..." until the run errors. |
-| ATS blocks Steel IP (403) | Stagehand `goto()` errors. Run emits `error`, transitions to `failed`, UI shows banner. |
-| Form schema extract returns empty | Adapter still proceeds with `fillable = []`; nothing fills, agent submits an empty form. Mitigation: add a "min 3 fields detected" sanity check (TODO). |
-| Anthropic / Gemini rate-limited | Run emits `error` and dies. No retry logic. Demo user re-clicks Start. |
-| Process restart mid-run | Run state lost (in-memory). User re-runs. Documented as acceptable. |
+## Failure modes
 
-See [04 — LLD](./04-architecture-lld.md) for the actual code paths and data shapes.
+| Failure | What happens | Mitigation |
+|---|---|---|
+| Steel session fails to provision | `/api/start` returns `liveUrl: null` after 8 s wait. UI shows "Provisioning…" until SSE delivers an error. | Surface a clearer "Steel slow" state if it takes > 15s. Currently acceptable. |
+| ATS blocks Steel IP (403) | `page.goto` throws. Run transitions to `failed`. FailedBanner appears. | Stealth plugin enabled + 2-sec warm-up nav. Escape hatch: switch to Anchor Browser. |
+| Anthropic rate-limited | Field mapping or extract throws. Per-field errors are caught and logged; run continues. Extract errors fail the whole run. | Single attempt — no retries. User re-runs. |
+| Process restart mid-run | All in-memory state lost. User re-runs. | Documented as acceptable. SaaS phase would persist run state to Postgres. |
+| Stagehand hangs in `act()` | Run can take up to ~30 s to react to a Stop click. | Per-step `bail()` is the abort point. True mid-`act()` cancellation isn't supported by Stagehand v3. |
+| Extension talks to wrong server | If `apiBase` in storage is stale, `/api/start` 404s and toast fires. | Re-pair to refresh stored config. |
+
+---
+
+For the file map, exact data shapes, and code paths, see [04 — LLD](./04-architecture-lld.md).

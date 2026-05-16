@@ -45,9 +45,6 @@
         "http://127.0.0.1:3000/*",
         "https://autoapply.com/*"
       ]
-    },
-    "action": {
-      "default_title": "AutoApply"
     }
   }
 }

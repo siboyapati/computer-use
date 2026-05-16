@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Upload, FileText, Sparkles, Loader2, RotateCcw, X } from "lucide-react";
+import { Upload, FileText, Sparkles, Loader2, RotateCcw, X, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RunHistoryStrip } from "./run-history";
 import type { HistoryItem, StoredResume } from "@/lib/storage";
@@ -10,6 +10,7 @@ import type { HistoryItem, StoredResume } from "@/lib/storage";
 interface Props {
   onParsed: (data: { resume: unknown; pdfBase64: string; fileName: string }) => void;
   onError: (message: string) => void;
+  onUseSample: () => Promise<void>;
   storedResume: StoredResume | null;
   history: HistoryItem[];
   onUseStoredResume: () => void;
@@ -19,6 +20,7 @@ interface Props {
 export function Landing({
   onParsed,
   onError,
+  onUseSample,
   storedResume,
   history,
   onUseStoredResume,
@@ -26,7 +28,23 @@ export function Landing({
 }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [sampling, setSampling] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Wraps the parent's onUseSample so the button can render its own
+  // pending state without leaking sampling to other handlers.
+  const handleSample = useCallback(async () => {
+    if (sampling || busy) return;
+    setSampling(true);
+    try {
+      await onUseSample();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Couldn't load sample résumé");
+      setSampling(false);
+    }
+    // On success the page transitions away from Landing, so the component
+    // unmounts and we don't need to flip sampling back to false.
+  }, [sampling, busy, onUseSample, onError]);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -107,30 +125,48 @@ export function Landing({
           }}
         />
 
-        {storedResume && !busy && (
-          <motion.div
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-3 flex items-center justify-center gap-2 text-xs text-muted-foreground"
+        {/* Secondary CTAs below the drop zone. Both stay subtle so the
+            primary drop-zone affordance keeps focus. Either button skips
+            the parse step entirely:
+              - "Use last résumé" loads from localStorage (no API call).
+              - "Try with sample résumé" loads a built-in synthetic résumé
+                + the PDF from public/sample-resume.pdf. */}
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mt-3 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground"
+        >
+          {storedResume && !busy && (
+            <>
+              <button
+                type="button"
+                onClick={onUseStoredResume}
+                className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-primary transition hover:bg-primary/15"
+              >
+                <RotateCcw className="size-3" />
+                Use last résumé ({storedResume.resume.personal.firstName}, {storedResume.fileName})
+              </button>
+              <button
+                type="button"
+                onClick={onForgetStoredResume}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-muted-foreground/70 hover:text-foreground"
+                aria-label="Forget stored résumé"
+              >
+                <X className="size-3" />
+              </button>
+              <span className="text-muted-foreground/40">·</span>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={handleSample}
+            disabled={sampling || busy}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-foreground/80 transition hover:border-primary/40 hover:text-foreground disabled:opacity-60"
           >
-            <button
-              type="button"
-              onClick={onUseStoredResume}
-              className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-primary transition hover:bg-primary/20"
-            >
-              <RotateCcw className="size-3" />
-              Use last résumé ({storedResume.resume.personal.firstName}, {storedResume.fileName})
-            </button>
-            <button
-              type="button"
-              onClick={onForgetStoredResume}
-              className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-muted-foreground/70 hover:text-foreground"
-              aria-label="Forget stored résumé"
-            >
-              <X className="size-3" />
-            </button>
-          </motion.div>
-        )}
+            {sampling ? <Loader2 className="size-3 animate-spin" /> : <Wand2 className="size-3" />}
+            Try with sample résumé
+          </button>
+        </motion.div>
       </div>
 
       <div className="mt-10 flex items-center gap-6 text-xs uppercase tracking-[0.18em] text-muted-foreground">

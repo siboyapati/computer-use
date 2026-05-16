@@ -1,73 +1,101 @@
-# 02 — Features & Rationale
+# 02 — Features Overview
 
-The demo is intentionally narrow. Three core features carry it; nine common-suspect features were deliberately deferred.
+Every feature currently in the codebase, ranked roughly by user-visible impact. Each one has a deep-dive doc in [`features/`](./features/) — this file is the **map**, not the manual.
 
-## In scope
+A "deferred" list at the bottom records what we considered and consciously didn't build, with the reasoning.
 
-### F1 — Résumé parsing (PDF → strict JSON)
+---
 
-**What it does:** User drops a PDF résumé. The server forwards bytes to Anthropic's PDF input API and asks Claude Haiku 4.5 (via `tool_use` with a strict JSON Schema) to extract the résumé into the `Resume` shape: personal info, headline, experience, education, skills, projects, certifications.
+## In scope (built and shipping)
 
-**Why we built it:** Without structured JSON, the agent would have to re-read the résumé for every field it fills — slow, expensive, and inconsistent. With it, the agent has a single source of truth it can map deterministically. Also: showing the parsed JSON in the UI is part of the magic moment ("look, it understood my résumé").
+### Core agent surface
 
-**Why this approach (vs PyPDF / local model):** One API call, $0.001 per résumé, strict JSON via tool use, no PDF parsing library to maintain, no GPU dependency.
+| Feature | One-line | Deep dive |
+|---|---|---|
+| **Résumé parser** | PDF → strict JSON in one Claude call (PDF input + `tool_use`). | [resume-parser.md](./features/resume-parser.md) |
+| **Agent runner** | Stagehand v3 + Steel.dev cloud browser orchestration; navigates, fills, submits, screenshots. | [agent-runner.md](./features/agent-runner.md) |
+| **Field mapping** | Deterministic dictionary → EEO heuristics → LLM fallback, with prompt-caching. EEO never auto-picks a real demographic answer. | [field-mapping.md](./features/field-mapping.md) |
+| **ATS adapters** | Per-platform extraction + file-upload + submit, with deterministic CSS selectors before LLM `act()` fallback. | [ats-adapters.md](./features/ats-adapters.md) |
+| **Live browser stream** | Steel `sessionViewerUrl` iframed + SSE event log → user watches the agent in real time. SSE handler removes listeners on disconnect. | [live-stream.md](./features/live-stream.md) |
+| **Try with sample résumé** | A built-in synthetic résumé + PDF ship in `public/sample-resume.pdf`. Landing CTA loads them instantly — no API call, no Anthropic cost. | [persistence.md](./features/persistence.md#sample-r%C3%A9sum%C3%A9) |
 
-### F2 — Vision-driven form fill + real submit
+### User controls
 
-**What it does:** Given the parsed résumé + a job URL on Lever / Greenhouse / Ashby, the agent:
-1. Spins up a Steel.dev cloud Chromium session
-2. Connects Stagehand over CDP
-3. Navigates to the job page
-4. Calls `stagehand.extract()` once to get the full form schema (labels, types, options)
-5. For each field:
-   - Tries a **deterministic map** from common labels → résumé JSON fields (name, email, phone, LinkedIn, etc)
-   - For EEO/demographic fields, defaults to "Decline to answer"
-   - For ambiguous / custom questions, asks Claude to generate an answer grounded in the résumé
-6. Uploads the résumé PDF via Playwright's `setInputFiles` (bypasses the LLM)
-7. Clicks Submit
-8. Captures a post-submit screenshot
+| Feature | One-line | Deep dive |
+|---|---|---|
+| **Review-before-submit** | Default ON. Agent fills + uploads, then pauses. User clicks "Submit for real". | [review-mode.md](./features/review-mode.md) |
+| **Stop button** | Mid-run abort. `POST /api/stop/[runId]` flips a flag; runner checks between steps. | [review-mode.md](./features/review-mode.md) |
+| **Submit-for-real button** | While in review mode, the user clicks this to release the pause and let the agent submit. | [review-mode.md](./features/review-mode.md) |
+| **Model toggle** | Runtime switch between Claude Haiku 4.5 and Gemini 3 Flash for the agent. | [model-toggle.md](./features/model-toggle.md) |
+| **Résumé persistence** | Parsed résumé survives refresh via `localStorage`. "Use last résumé" CTA on landing. | [persistence.md](./features/persistence.md) |
+| **Run history** | Last 5 finished runs stored locally with screenshot thumbnails. Strip on the landing page. | [persistence.md](./features/persistence.md) |
+| **Apply-to-another** | Celebration modal's primary action keeps the résumé, only clears the URL. | [persistence.md](./features/persistence.md) |
+| **Deep linking** | `/?runId=X` opens straight into LiveRun mode. Used by the extension and shareable links. | [chrome-extension.md](./features/chrome-extension.md#deep-linking) |
 
-**Why we built it:** This is the whole product. Without this, there's no demo.
+### Chrome extension
 
-**Why we chose Lever / Greenhouse / Ashby:** Together they cover roughly half of all postings a candidate sees. They have stable DOM structures, native `<input type="file">` for résumé uploads (Playwright-friendly), and don't gate the actual form behind a CAPTCHA. **Workday is explicitly out** — paginated, bot-detection-heavy, 10+ pages, and a single misbehaving `act()` loop on Workday can burn $5+ in tokens.
+| Feature | One-line | Deep dive |
+|---|---|---|
+| **Floating apply button** | Content script injects a glass button on every Lever/GH/Ashby posting. | [chrome-extension.md](./features/chrome-extension.md) |
+| **Toolbar popup** | Extension icon shows status + résumé preview + a contextual "Apply to this Lever job" CTA when on a posting. | [chrome-extension.md](./features/chrome-extension.md) |
+| **One-time pairing** | `/connect?ext_id=<id>` page on the web app pushes the résumé into the extension via `externally_connectable`. | [chrome-extension.md](./features/chrome-extension.md) |
+| **Options page** | Polished Tailwind UI: connect / re-pair / disconnect, server URL config, résumé summary. | [chrome-extension.md](./features/chrome-extension.md) |
 
-### F3 — Live browser stream + agent event log
+### Infrastructure
 
-**What it does:** As soon as the agent starts, the user sees a **split-screen page**:
-- **Left (60%)**: the actual Steel.dev cloud browser, embedded in an `<iframe>`. They watch the agent type, click, scroll — in real time.
-- **Right (40%)**: a streaming event log narrating every action the agent takes (`▸ Filling First Name`, `↳ alex@example.com`, `✓ Uploading resume.pdf`, `→ Clicking Submit`).
-- **Top**: a phase strip — Booting → Reading → Filling → Submitting → Done.
+| Feature | One-line | Deep dive |
+|---|---|---|
+| **CORS layer** | Permissive CORS on all routes the extension calls. | [reference/api.md](./reference/api.md) |
+| **SSE events** | `text/event-stream` from in-memory pub/sub keyed by `runId`. | [features/live-stream.md](./features/live-stream.md) |
+| **In-memory pub/sub + run prune** | `Map<runId, { meta, emitter, log }>` + 5-min interval cleanup. | [features/agent-runner.md](./features/agent-runner.md#run-lifecycle) |
+| **Resume PDF cleanup** | Temp PDFs deleted in `runner.ts`'s `finally`. | [features/agent-runner.md](./features/agent-runner.md) |
+| **Cost cap** | Per-run hard cap of 40 fields filled; Workday URLs hard-blocked via `detectATS`. | [features/field-mapping.md](./features/field-mapping.md) |
 
-**Why we built it:** This is the demo's hero moment. Anyone who watches it gets the product immediately. Without the live stream it would be just another "fill out a form" tool.
-
-**Why this approach:** Steel.dev's `sessionViewerUrl` is designed to be iframed. Server-Sent Events stream agent events from the Node process to the React UI with no polling. No WebSocket library needed.
-
-## Deliberately deferred
-
-Every one of these was considered and deferred for the demo. They're listed here so future-us doesn't re-litigate them.
-
-| Feature | Why not now |
-|---|---|
-| Auth / accounts | One user (you). Adds friction to a demo that should be one-click from the landing page. |
-| Stripe / payments | No customers to charge yet. The demo is the validator; payments come if/when the demo proves demand. |
-| Rate limiting / cost cap | Single user, you're watching the bill. Would add Upstash Redis + per-IP tracking for zero benefit right now. |
-| Usage dashboard | We have one user. They are us. |
-| PostHog / analytics | No funnel to analyze yet. Vercel Analytics + Sentry can come later. |
-| Chrome extension | Worth building when we have users who'd install it. Until then, the paste-URL flow is fine. |
-| Application history | All run state lives in-memory by design. If we want history, we want a database — and a database means we're now a SaaS. |
-| Cover letter generation | Easy to add (single Claude call) but isn't part of the wow moment. Defer to v2. |
-| Workday support | Cost runaway risk + bot detection nightmare + 10+ paginated pages. Hard-blocked at the API layer for the demo. |
-| Multi-user / multi-tenancy | One user. See "auth / accounts." |
+---
 
 ## Default behaviors worth knowing
 
-- **EEO / demographic questions**: agent always selects "Decline to answer" if that's an available option. Users can opt-in later if we want; for now we err on the side of privacy + faster fills.
-- **Required fields with no résumé data**: agent fills via Claude's custom-question fallback (grounded in the résumé). If Claude returns an empty string, the field is skipped — the user will see the unfilled field in the live browser and can decide whether to manually fix or re-run.
-- **File upload**: only the résumé PDF. No cover letter file. No transcripts. No portfolio attachments. Adding more would just multiply edge cases without changing the demo.
-- **Submit**: real submit. Each run sends a real application. The Confirm screen warns about this with an amber alert; no checkbox gate (would interrupt the demo flow).
+- **Theme**: light by default (warm off-white background, charcoal text, olive-chartreuse accent). The `.dark` class palette is preserved in `globals.css` for a future toggle but isn't applied at the `<html>` root.
+- **EEO / demographic fields**: agent picks the first option matching `/decline|prefer not|do not wish|don.?t wish|rather not|not.*say|wish.*disclose/i`. **If no decline-style option exists, the field is left blank** (privacy: never auto-picks a real demographic answer like "Black or African American").
+- **File uploads**: agent uses Playwright's `setInputFiles` — bypasses the LLM entirely for file dialogs.
+- **Resume upload size**: 5 MB max (Anthropic PDF input limit). Enforced at `/api/parse-resume`.
+- **Submit button selection**: deterministic CSS/XPath first (`button[type="submit"]`, `xpath=//button[contains(., "submit")]`); `stagehand.act()` only as fallback.
+- **Workday**: hard-blocked. `detectATS` returns `null` and `/api/start` rejects. Reason: 10+ page paginated forms blow the token budget, plus heavy bot detection.
+- **Per-run field cap**: 40 fields. Anything more is treated as a malformed form and skipped with a logged error.
 
-## What "done" looks like for each feature
+---
 
-- **F1 done:** any standard PDF résumé returns a `Resume` object that passes Zod validation. Parsed card in the UI shows name, headline, contact info, and at least the most recent role + degree.
-- **F2 done:** for a known Lever posting + a real résumé, the agent fills every visible non-file field, uploads the PDF, clicks submit, and captures a post-submit screenshot — without manual intervention. (Greenhouse + Ashby ship after Lever, same bar.)
-- **F3 done:** from page-load to "Submitted" confetti, the user has a clear visual story of what the agent is doing. The live iframe is the central element, not a tiny side panel.
+## Deferred (considered, not built)
+
+Each line is a feature someone could ask for. The "why not" is the artifact that prevents us from re-litigating.
+
+| Feature | Why not |
+|---|---|
+| Auth / accounts | Single user (the founder). Auth adds friction to a demo that should be one click. Pair-and-trust on the extension. |
+| Stripe / payments | No customers to charge yet. Demo is the validator. |
+| Rate limiting / cost cap per IP | Single user. Founder watches the bill. Per-run field cap covers the worst case. |
+| Application history (server-side) | All run state in-memory by design. History on the client (localStorage) is enough for one user. |
+| Cover-letter generation | Single Claude call would add it. Defer to v2 — not core to the wow moment. |
+| Workday support | Cost runaway + bot detection + 10+ paginated pages. Hard-blocked. |
+| Multi-résumé support | Only one paired résumé. Adding "tech vs PM" requires a picker UI and storage rework. v2. |
+| Firefox / Safari extension | Chromium only for v1. MV3 support in Firefox is still rocky. |
+| Native macOS menu bar app | A Chrome extension covers 90% of the value for 20% of the effort. The native app's only unique value is the global hotkey, which doesn't help on a focused browser tab. |
+| PostHog / analytics | One user. No funnel to analyze. Vercel Analytics later if needed. |
+| Sentry | Console logs are enough at this scale. |
+| Application scoring / "good fit" detection | Out of scope. Extension knows host pattern, not job-fit semantics. |
+| Resume editing inside the extension | The web app is the source of truth; the extension is a trigger. |
+
+---
+
+## What "done" looks like for each in-scope feature
+
+Each feature's deep-dive doc has its own "verification" section, but the high-level bar:
+
+- **Résumé parser**: any standard PDF returns a `Resume` object passing Zod validation.
+- **Agent runner**: real Lever / Greenhouse / Ashby URL → real submitted application + screenshot.
+- **Live stream**: from page load to "Submitted" confetti, the user has a continuous visual narrative.
+- **Chrome extension**: drop résumé on web app → pair extension → open job page → floating button → new tab → live stream.
+- **Review-before-submit**: agent fills all fields, pauses, "Submit for real" sends the click.
+- **Stop**: clicking Stop within ~2 seconds halts the run.
+- **Model toggle**: switching Claude → Gemini on the Confirm screen runs the same fill flow with the alternate model.
+- **Persistence**: full browser refresh → user is still set up; recent runs visible.

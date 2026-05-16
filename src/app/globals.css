@@ -49,50 +49,66 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   LIGHT THEME — default. Warm off-white background, deep charcoal text,
+   olive-chartreuse accent that pops against the paper-light surface.
+   ──────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: oklch(0.99 0.005 70);
-  --foreground: oklch(0.18 0.01 60);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0.01 60);
+  /* Surfaces */
+  --background: oklch(0.985 0.005 85);          /* warm off-white #FAF8F2 */
+  --foreground: oklch(0.18 0.012 60);           /* warm charcoal */
+  --card: oklch(1 0 0);                         /* pure white */
+  --card-foreground: oklch(0.18 0.012 60);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0.01 60);
-  --primary: oklch(0.86 0.18 130);
-  --primary-foreground: oklch(0.15 0.02 130);
-  --secondary: oklch(0.96 0.01 70);
-  --secondary-foreground: oklch(0.18 0.01 60);
-  --muted: oklch(0.95 0.01 70);
-  --muted-foreground: oklch(0.5 0.02 60);
-  --accent: oklch(0.95 0.01 70);
-  --accent-foreground: oklch(0.18 0.01 60);
-  --destructive: oklch(0.62 0.22 25);
-  --border: oklch(0.9 0.01 70);
-  --input: oklch(0.92 0.01 70);
-  --ring: oklch(0.86 0.18 130);
-  --chart-1: oklch(0.86 0.18 130);
-  --chart-2: oklch(0.7 0.15 50);
-  --chart-3: oklch(0.6 0.12 240);
-  --chart-4: oklch(0.7 0.18 320);
-  --chart-5: oklch(0.55 0.15 20);
+  --popover-foreground: oklch(0.18 0.012 60);
+
+  /* Brand — deeper olive on light so it pops without screaming */
+  --primary: oklch(0.55 0.18 130);              /* deep chartreuse-olive */
+  --primary-foreground: oklch(0.99 0.005 95);   /* warm white on the accent */
+
+  /* Secondary surfaces */
+  --secondary: oklch(0.965 0.008 80);           /* light warm gray */
+  --secondary-foreground: oklch(0.22 0.012 60);
+  --muted: oklch(0.96 0.008 80);
+  --muted-foreground: oklch(0.5 0.018 65);      /* readable muted gray */
+  --accent: oklch(0.94 0.012 80);               /* subtle hover tint */
+  --accent-foreground: oklch(0.22 0.012 60);
+
+  --destructive: oklch(0.6 0.22 25);            /* readable red */
+
+  --border: oklch(0.9 0.008 80);                /* hairline */
+  --input: oklch(0.93 0.008 80);
+  --ring: oklch(0.55 0.18 130);                 /* matches primary */
+
+  --chart-1: oklch(0.55 0.18 130);
+  --chart-2: oklch(0.6 0.15 50);
+  --chart-3: oklch(0.55 0.13 240);
+  --chart-4: oklch(0.6 0.18 320);
+  --chart-5: oklch(0.55 0.18 20);
+
   --radius: 0.875rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.18 0.01 60);
-  --sidebar-primary: oklch(0.86 0.18 130);
-  --sidebar-primary-foreground: oklch(0.15 0.02 130);
-  --sidebar-accent: oklch(0.96 0.01 70);
-  --sidebar-accent-foreground: oklch(0.18 0.01 60);
-  --sidebar-border: oklch(0.9 0.01 70);
-  --sidebar-ring: oklch(0.86 0.18 130);
+
+  --sidebar: oklch(0.99 0.004 85);
+  --sidebar-foreground: oklch(0.18 0.012 60);
+  --sidebar-primary: oklch(0.55 0.18 130);
+  --sidebar-primary-foreground: oklch(0.99 0.005 95);
+  --sidebar-accent: oklch(0.94 0.012 80);
+  --sidebar-accent-foreground: oklch(0.22 0.012 60);
+  --sidebar-border: oklch(0.9 0.008 80);
+  --sidebar-ring: oklch(0.55 0.18 130);
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   DARK THEME — kept intact for a future toggle. Add `class="dark"` to <html>
+   or a parent element to opt in.
+   ──────────────────────────────────────────────────────────────────────── */
 .dark {
-  /* warm near-black, not pure black */
   --background: oklch(0.16 0.008 70);
   --foreground: oklch(0.96 0.01 80);
   --card: oklch(0.21 0.008 70);
   --card-foreground: oklch(0.96 0.01 80);
   --popover: oklch(0.21 0.008 70);
   --popover-foreground: oklch(0.96 0.01 80);
-  /* sodium-yellow / lime accent — single saturated hit */
   --primary: oklch(0.88 0.19 110);
   --primary-foreground: oklch(0.15 0.02 110);
   --secondary: oklch(0.26 0.008 70);
@@ -126,6 +142,14 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Light-theme subtle background — paper warmth, no heavy gradient */
+    background-image:
+      radial-gradient(900px circle at 100% -20%, oklch(0.96 0.06 90 / 0.6), transparent 55%),
+      radial-gradient(700px circle at -10% 110%, oklch(0.96 0.05 130 / 0.45), transparent 55%);
+    background-attachment: fixed;
+  }
+  .dark body {
+    /* Dark mode keeps the original warm gradient */
     background-image:
       radial-gradient(800px circle at 80% -10%, oklch(0.4 0.04 100 / 0.18), transparent 50%),
       radial-gradient(700px circle at -10% 100%, oklch(0.3 0.05 70 / 0.18), transparent 55%);
@@ -141,23 +165,57 @@
 }
 
 @layer utilities {
+  /* Display serif treatment for headlines */
   .font-display {
     font-family: var(--font-display);
     font-feature-settings: "ss01", "ss02";
     letter-spacing: -0.02em;
   }
-  .glass {
+
+  /* Card surface — clean white on light, glassy on dark */
+  .surface {
+    background: var(--card);
+    border: 1px solid var(--border);
+    box-shadow:
+      0 1px 0 0 oklch(1 0 0 / 0.02) inset,
+      0 4px 14px -8px oklch(0 0 0 / 0.08),
+      0 1px 3px -1px oklch(0 0 0 / 0.04);
+  }
+  .dark .surface {
     background: color-mix(in oklch, var(--card) 60%, transparent);
     backdrop-filter: blur(16px) saturate(140%);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
     border: 1px solid color-mix(in oklch, var(--border) 100%, transparent);
+    box-shadow: none;
   }
+
+  /* Legacy alias — many components still use `.glass`. Maps to `.surface`
+     so existing class names continue to render correctly under light mode. */
+  .glass {
+    background: var(--card);
+    border: 1px solid var(--border);
+    box-shadow:
+      0 1px 0 0 oklch(1 0 0 / 0.02) inset,
+      0 4px 14px -8px oklch(0 0 0 / 0.08),
+      0 1px 3px -1px oklch(0 0 0 / 0.04);
+  }
+  .dark .glass {
+    background: color-mix(in oklch, var(--card) 60%, transparent);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid color-mix(in oklch, var(--border) 100%, transparent);
+    box-shadow: none;
+  }
+
+  /* Accent gradient for the hero headline */
   .text-gradient-accent {
-    background: linear-gradient(90deg, var(--primary), oklch(0.92 0.13 75));
+    background: linear-gradient(90deg, var(--primary), oklch(0.62 0.16 95));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
+
+  /* Thin scrollbar used by the live event log */
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -168,5 +226,20 @@
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
+  }
+
+  /* Subtle elevation for floating elements */
+  .shadow-card {
+    box-shadow:
+      0 1px 0 0 oklch(1 0 0 / 0.04) inset,
+      0 8px 24px -12px oklch(0 0 0 / 0.1),
+      0 2px 6px -2px oklch(0 0 0 / 0.05);
+  }
+
+  /* Accent ring for primary buttons / focused inputs */
+  .shadow-accent {
+    box-shadow:
+      0 4px 16px -6px color-mix(in oklch, var(--primary) 35%, transparent),
+      0 1px 3px -1px oklch(0 0 0 / 0.08);
   }
 }

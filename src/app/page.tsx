@@ -114,7 +114,22 @@ export default function Page() {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      setStoredResume(loadResume());
+      const resume = loadResume();
+      setStoredResume(resume);
+      // Skip the drop-zone landing if a résumé is already saved. The
+      // deep-link `?runId=` effect below still overrides to phase="live"
+      // when present, so this doesn't fight that flow.
+      if (resume && typeof window !== "undefined") {
+        const hasRunIdParam = new URLSearchParams(window.location.search).has("runId");
+        if (!hasRunIdParam) {
+          dispatch({
+            type: "USE_STORED",
+            resume: resume.resume,
+            pdfBase64: resume.pdfBase64,
+            fileName: resume.fileName,
+          });
+        }
+      }
       setHistory(loadHistory());
       const storedActiveRun = loadActiveRun();
       setActiveRun(storedActiveRun);

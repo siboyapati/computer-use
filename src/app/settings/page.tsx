@@ -79,11 +79,42 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
+    void (async () => {
+      const local = loadKeys();
+      // Pre-populate any empty slot from the server's .env.local so the
+      // user doesn't have to paste keys that already exist locally. Only
+      // fills slots the user hasn't set themselves — a saved blank stays
+      // blank, the user's own value is never overwritten.
+      const needsAny = !local.anthropic || !local.google || !local.steel;
+      let merged: StoredKeys = local;
+      if (needsAny) {
+        try {
+          const res = await fetch("/api/env-keys", { cache: "no-store" });
+          if (res.ok) {
+            const body = (await res.json()) as {
+              keys?: { anthropic?: string; google?: string; steel?: string };
+            };
+            const env = body.keys ?? {};
+            merged = {
+              anthropic: local.anthropic ?? env.anthropic,
+              google: local.google ?? env.google,
+              steel: local.steel ?? env.steel,
+              updatedAt: local.updatedAt,
+            };
+            const changed =
+              merged.anthropic !== local.anthropic ||
+              merged.google !== local.google ||
+              merged.steel !== local.steel;
+            if (changed) saveKeys(merged);
+          }
+        } catch {
+          // Network/parse error — fall back to localStorage-only view.
+        }
+      }
       if (cancelled) return;
-      setKeys(loadKeys());
+      setKeys(merged);
       setHydrated(true);
-    });
+    })();
     return () => {
       cancelled = true;
     };

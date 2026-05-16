@@ -13,6 +13,7 @@
 import { Stagehand } from "@browserbasehq/stagehand";
 import { z } from "zod";
 import { createSession, releaseSession } from "./src/lib/agent/steel";
+import { resolveAnthropic, resolveSteel } from "./src/lib/agent/keys";
 
 const SAMPLE_RESUME = {
   fullName: "Alex Chen",
@@ -30,22 +31,30 @@ async function main() {
     console.error("Usage: npm run spike -- <lever-job-url>");
     process.exit(1);
   }
-  if (!process.env.STEEL_API_KEY) {
-    console.error("STEEL_API_KEY is not set. Copy .env.local.example to .env.local and fill it in.");
-    process.exit(1);
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("ANTHROPIC_API_KEY is not set.");
+
+  // Use the resolved keys to benefit from placeholder detection
+  let anthropicKey: string;
+  let steelKey: string;
+  try {
+    anthropicKey = resolveAnthropic();
+    steelKey = resolveSteel();
+  } catch (err) {
+    console.error(`✗ ${(err as Error).message}`);
     process.exit(1);
   }
 
   console.log("→ Creating Steel session...");
-  const session = await createSession();
+  const session = await createSession(steelKey);
   console.log(`✓ Session ${session.id}`);
-  console.log(`  Live view: ${session.sessionViewerUrl}`);
-  console.log(`  ↑ Open that URL in your browser to watch the agent work\n`);
+  console.log(`  Session Viewer: ${session.sessionViewerUrl}`);
+  console.log(`  Debug URL (Public): ${session.debugUrl}`);
+  console.log(`  ↑ Open the Debug URL in your browser to watch the agent work\n`);
 
   const model = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-haiku-4-5";
+
+  // Small delay to let the cloud browser boot fully before CDP connection.
+  await new Promise((r) => setTimeout(r, 2000));
+
   const stagehand = new Stagehand({
     env: "LOCAL",
     verbose: 0,
@@ -53,12 +62,19 @@ async function main() {
     localBrowserLaunchOptions: { cdpUrl: session.websocketUrl },
     model: {
       modelName: `anthropic/${model}` as never,
-      apiKey: process.env.ANTHROPIC_API_KEY!,
+      apiKey: anthropicKey,
     },
   });
 
   try {
-    await stagehand.init();
+    // Retry init once if it fails (handles transient 502s from Steel)
+    try {
+      await stagehand.init();
+    } catch (err) {
+      console.warn("→ Stagehand init failed, retrying once...");
+      await new Promise((r) => setTimeout(r, 3000));
+      await stagehand.init();
+    }
     const page = stagehand.context.activePage();
     if (!page) throw new Error("No active page");
 

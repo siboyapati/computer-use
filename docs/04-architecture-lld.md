@@ -116,7 +116,7 @@ All string fields default to `""`, all arrays default to `[]`. Zod validates the
 ```ts
 {
   runId, jobUrl, ats: "lever" | "greenhouse" | "ashby",
-  liveUrl: string | null,                      // Steel sessionViewerUrl
+  liveUrl: string | null,                      // Steel debugUrl
   status: "starting" | "navigating" | "filling"
         | "awaiting_review" | "submitting"
         | "submitted" | "failed" | "stopped",
@@ -214,7 +214,7 @@ runApplication({ runId, resume, pdfBase64, jobUrl, ats, provider, reviewMode })
   ├─ emit "started"  (with provider/modelName/reviewMode in data)
   ├─ session = await createSession()                    // src/lib/agent/steel.ts
   ├─ bail(runId)                                         // throws StoppedError if stop was requested
-  ├─ updateMeta(runId, { liveUrl: session.sessionViewerUrl })
+  ├─ updateMeta(runId, { liveUrl: session.debugUrl + '?interactive=true' })
   ├─ emit "started" with liveUrl
   ├─ stagehand = new Stagehand({ env: "LOCAL", cdpUrl: session.websocketUrl, model })
   ├─ await stagehand.init()

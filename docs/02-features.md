@@ -16,7 +16,7 @@ A "deferred" list at the bottom records what we considered and consciously didn'
 | **Agent runner** | Stagehand v3 + Steel.dev cloud browser orchestration; navigates, fills, submits, screenshots. | [agent-runner.md](./features/agent-runner.md) |
 | **Field mapping** | Deterministic dictionary → EEO privacy guard → profile extras → semantic saved answers → LLM fallback, with prompt-caching. EEO never auto-picks a real demographic answer. | [field-mapping.md](./features/field-mapping.md) |
 | **ATS adapters** | Per-platform extraction + file-upload + submit, with deterministic CSS selectors before LLM `act()` fallback. | [ats-adapters.md](./features/ats-adapters.md) |
-| **Live browser stream** | Steel `sessionViewerUrl` iframed + SSE event log → user watches the agent in real time. SSE handler removes listeners on disconnect. | [live-stream.md](./features/live-stream.md) |
+| **Live browser stream** | Steel `debugUrl` (unauthenticated, with `?interactive=true`) iframed + SSE event log → user watches the agent in real time. SSE handler removes listeners on disconnect. | [live-stream.md](./features/live-stream.md) |
 | **Try with sample résumé** | A built-in synthetic résumé + PDF ship in `public/sample-resume.pdf`. Landing CTA loads them instantly — no API call, no Anthropic cost. | [persistence.md](./features/persistence.md#sample-r%C3%A9sum%C3%A9) |
 
 ### User controls

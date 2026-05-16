@@ -4,7 +4,7 @@
 
 A split-screen view that lets the user **watch the agent work in real time**:
 
-- **Left (60%)** — the actual cloud Chromium browser rendered in an `<iframe>` via Steel.dev's `sessionViewerUrl`.
+- **Left (60%)** — the actual cloud Chromium browser rendered in an `<iframe>` via Steel.dev's `debugUrl` (with `?interactive=true`).
 - **Right (40%)** — a streaming terminal-style event log driven by Server-Sent Events from the in-memory pub/sub.
 - **Top** — a phase strip (Booting → Reading → Filling → Submitting → Done) that lights up as the run progresses.
 - **Bottom** — a thinking indicator or paused-for-review notice depending on state.
@@ -18,7 +18,7 @@ This is the demo's hero moment. The product becomes obvious as soon as someone w
 
 Design moves chosen on purpose:
 
-- **Iframe the cloud browser** instead of WebSocket-streaming pixels. Steel publishes `sessionViewerUrl` already configured for embedding — zero infra to build.
+- **Iframe the cloud browser** instead of WebSocket-streaming pixels. Steel publishes a `debugUrl` (the `/player` endpoint) that is unauthenticated and perfect for embedding. We append `?interactive=true` so the user can take control during the review phase.
 - **Server-Sent Events** instead of WebSockets. SSE auto-reconnects, works through proxies, and Next.js handles it with a `ReadableStream` — no custom WS server.
 - **Phase strip + event log** rather than a single status spinner. The user needs *narrative*. A spinner says "working"; the event log says "✓ Filled email, ▸ Reading custom question..."
 - **Confetti on submit.** Demos that end on a moment of celebration get shared more.
@@ -185,7 +185,7 @@ If the run ends in `failed`, a fixed-position banner appears at the bottom:
 
 ## Gotchas
 
-- **iframe X-Frame-Options.** Steel publishes `sessionViewerUrl` configured for embedding. If Steel ever ships an update that breaks this, fallback is a popup window (`window.open`).
+- **iframe X-Frame-Options.** Steel publishes `debugUrl` configured for unauthenticated embedding. If Steel ever ships an update that breaks this, fallback is a popup window (`window.open`).
 - **SSE doesn't reconnect on a closed `controller`.** The handler removes its listeners on `done`. If the client disconnects without `done` (network blip, tab closed), the listeners stay attached until the next event fires and the `enqueue` throws. Not a leak in practice but worth knowing.
 - **Auto-scroll bug:** if the user manually scrolls up to read older events, the next event auto-scrolls them back to the bottom. v2 could detect manual scroll and pause auto-scroll until the user returns to the bottom. Not implemented.
 - **Screenshot is base64, up to ~3 MB.** It rides along in the META event payload. For one user this is fine; at scale we'd upload to S3 and serve a URL.

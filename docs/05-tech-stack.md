@@ -13,7 +13,7 @@ This is the running stack as built. For why we *reversed* the founder's original
 | Theme | Light by default (warm off-white + olive accent), `.dark` palette preserved for future toggle | — | The `<html>` element does NOT carry a `dark` class. `globals.css` defines both palettes via CSS variables; switching is a one-line class flip. |
 | Fonts | Fraunces (display) + Inter (sans) + JetBrains Mono | via `next/font/google` | Display serif + monospace avoids the "Inter everywhere" AI-demo look. |
 | Agent runtime | `@browserbasehq/stagehand` v3 | 3.4.0 | Chrome Accessibility Tree, server-side `act()` caching, native `setInputFiles` via Playwright. |
-| Cloud browser | `steel-sdk` | 0.18.0 | 100 free browser-hrs/mo. `sessionViewerUrl` is the embedded iframe. |
+| Cloud browser | `steel-sdk` | 0.18.0 | 100 free browser-hrs/mo. `debugUrl` (with `?interactive=true`) is the embedded iframe. |
 | LLM (default) | Claude Haiku 4.5 (`claude-haiku-4-5`) via `@anthropic-ai/sdk` | 0.96.0 | $1 / $5 per 1M. Cache-friendly. PDF input for résumé parsing. |
 | LLM (alt) | Gemini 3 Flash (`google/gemini-3-flash-preview`) via Stagehand's AI SDK adapter | optional | UI toggle on Confirm screen for A/B comparison. |
 | Validation | Zod | 4.4.3 | Strict shape validation on Anthropic `tool_use` output + `/api/start` body. |

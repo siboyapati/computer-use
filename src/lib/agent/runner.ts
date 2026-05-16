@@ -181,10 +181,13 @@ export async function runApplication(args: RunArgs): Promise<void> {
 
     session = await createSession(steelKey);
     bail(runId);
-    updateMeta(runId, { liveUrl: session.sessionViewerUrl });
+    updateMeta(runId, { liveUrl: `${session.debugUrl}?interactive=true` });
     emit(runId, "started", "Cloud browser session ready", {
-      liveUrl: session.sessionViewerUrl,
+      liveUrl: `${session.debugUrl}?interactive=true`,
     });
+
+    // Small delay to let the cloud browser boot fully before CDP connection.
+    await new Promise((r) => setTimeout(r, 2000));
 
     stagehand = new Stagehand({
       env: "LOCAL",
@@ -198,7 +201,15 @@ export async function runApplication(args: RunArgs): Promise<void> {
         apiKey,
       },
     });
-    await stagehand.init();
+
+    // Retry init once if it fails (handles transient 502s from Steel)
+    try {
+      await stagehand.init();
+    } catch (err) {
+      console.warn("Stagehand init failed, retrying once...", err);
+      await new Promise((r) => setTimeout(r, 3000));
+      await stagehand.init();
+    }
     bail(runId);
 
     updateMeta(runId, { status: "navigating" });

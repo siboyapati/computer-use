@@ -45,6 +45,9 @@ export function normalizeKeys(input: unknown): UserKeys {
   };
 }
 
+const PLACEHOLDER_ANTHROPIC = "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";
+const PLACEHOLDER_STEEL = "ste-DrPzkhwyEftsPHHJ2oGekUSYCFqCtcbv2OvDiseAxNfkZjz7156jrCpGzf3rwqjPJqpFgKqBs0APznUCa83B9sAjfgpjg0T6YX5";
+
 /**
  * Resolve the Anthropic API key for this request.
  * Throws if neither user override nor `ANTHROPIC_API_KEY` env var is set.
@@ -52,9 +55,9 @@ export function normalizeKeys(input: unknown): UserKeys {
 export function resolveAnthropic(userKeys?: UserKeys): string {
   const keys = normalizeKeys(userKeys);
   const k = keys.anthropic ?? process.env.ANTHROPIC_API_KEY;
-  if (!k) {
+  if (!k || k === PLACEHOLDER_ANTHROPIC) {
     throw new Error(
-      "Anthropic API key not configured. Add it on the Settings page or set ANTHROPIC_API_KEY on the server.",
+      "Anthropic API key not configured or using placeholder. Please set a real key in .env.local (sk-ant-...) or in the Settings page.",
     );
   }
   return k;
@@ -64,9 +67,9 @@ export function resolveAnthropic(userKeys?: UserKeys): string {
 export function resolveSteel(userKeys?: UserKeys): string {
   const keys = normalizeKeys(userKeys);
   const k = keys.steel ?? process.env.STEEL_API_KEY;
-  if (!k) {
+  if (!k || k === PLACEHOLDER_STEEL) {
     throw new Error(
-      "Steel API key not configured. Add it on the Settings page or set STEEL_API_KEY on the server.",
+      "Steel API key not configured or using placeholder. Please set a real key in .env.local (ste-...) or in the Settings page.",
     );
   }
   return k;

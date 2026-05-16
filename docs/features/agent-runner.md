@@ -48,7 +48,8 @@ runApplication({ runId, resume, pdfBase64, jobUrl, ats, provider, reviewMode })
   ├─ emit("started", "Starting application...", { provider, modelName, reviewMode })
   ├─ session = await createSession()                ← Steel.dev
   ├─ bail()                                          ← throws StoppedError if stop was requested
-  ├─ updateMeta { liveUrl: session.sessionViewerUrl }
+  ├─ updateMeta { liveUrl: session.debugUrl + '?interactive=true' }
+
   ├─ emit("started", "Cloud browser session ready", { liveUrl })
   ├─ stagehand = new Stagehand({ env: "LOCAL", cdpUrl, model })
   ├─ await stagehand.init()

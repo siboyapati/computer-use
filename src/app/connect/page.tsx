@@ -27,7 +27,7 @@ declare global {
 
 export default function ConnectPage() {
   return (
-    <main className="relative flex min-h-screen flex-col">
+    <main className="relative flex min-h-screen flex-col bg-background text-foreground">
       <Brand />
       <Suspense fallback={<LoadingState />}>
         <ConnectInner />
@@ -125,7 +125,7 @@ function ConnectInner() {
 
       <h1 className="font-display text-balance text-center text-5xl font-light leading-[1.05] text-foreground">
         Connect{" "}
-        <span className="italic text-gradient-accent">your résumé</span>
+        <span className="italic text-primary">your résumé</span>
         <br />
         to the extension.
       </h1>
@@ -138,7 +138,7 @@ function ConnectInner() {
       )}
 
       {status === "no-resume" && (
-        <div className="glass mt-12 w-full rounded-2xl p-6 text-center">
+        <div className="glass mt-12 w-full rounded-2xl bg-card p-6 text-center text-card-foreground">
           <AlertCircle className="mx-auto size-6 text-amber-600 dark:text-amber-400" />
           <p className="mt-3 text-foreground">No résumé saved yet on this browser.</p>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -155,7 +155,7 @@ function ConnectInner() {
       )}
 
       {(status === "ready" || status === "pairing") && stored && (
-        <div className="glass mt-12 w-full rounded-2xl p-6">
+        <div className="glass mt-12 w-full rounded-2xl bg-card p-6 text-card-foreground">
           <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
             Extension ID
           </div>
@@ -199,7 +199,7 @@ function ConnectInner() {
       )}
 
       {status === "success" && (
-        <div className="glass mt-12 w-full rounded-2xl p-6 text-center">
+        <div className="glass mt-12 w-full rounded-2xl bg-card p-6 text-center text-card-foreground">
           <div className="mx-auto inline-flex size-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
             <Check className="size-5" />
           </div>

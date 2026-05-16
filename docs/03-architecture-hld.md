@@ -42,7 +42,7 @@ A single Next.js process on Railway hosts the web UI, the API routes, and the ag
                           ┌─────────────────────────────────────────┐
                           │      Steel.dev cloud Chromium session   │
                           │  • websocketUrl     (Stagehand connects)│
-                          │  • sessionViewerUrl (iframed in LiveRun)│
+                          │  • debugUrl (iframed in LiveRun)        │
                           └─────────────────────────────────────────┘
                                                  │
                                                  ▼
@@ -141,7 +141,7 @@ Deep dive: [features/chrome-extension.md](./features/chrome-extension.md).
 
 - **One Node process, no queue.** Single-user, in-memory pub/sub is fast and trivial. Adding Redis would buy us nothing yet.
 - **SSE over WebSocket.** Auto-reconnects, works through proxies, no Next.js special handling — just a `ReadableStream` in the route handler.
-- **Iframe Steel's `sessionViewerUrl`.** Steel publishes a public, embed-able session URL — no screencast pipeline to build.
+- **Iframe Steel's `debugUrl`.** Steel provides an unauthenticated player endpoint (with `?interactive=true`) — no screencast pipeline or login required.
 - **PDF bytes round-trip via base64.** Keeps the server stateless. Costs ~7 MB on the wire per `/api/start`; acceptable for one user.
 - **Extension as a second client, not a parallel implementation.** The agent code lives in one place. The extension is a button + a `fetch`.
 - **No deep-link auth or token.** Whoever has the `runId` can view the run. Acceptable for the single-user demo; revisit if we publish to the Chrome Web Store.

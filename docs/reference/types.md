@@ -138,7 +138,8 @@ interface RunMetadata {
   runId:         string;
   jobUrl:        string;
   ats:           ATS;
-  liveUrl:       string | null;            // Steel sessionViewerUrl, null until provisioned
+  liveUrl:       string | null;            // Steel debugUrl (with ?interactive=true), null until provisioned
+
   status:        RunStatus;
   company:       string | null;            // populated by form_extracted
   startedAt:     number;

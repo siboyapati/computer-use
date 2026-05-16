@@ -3,9 +3,14 @@ import { z } from "zod";
 import { ResumeSchema, detectATS } from "@/lib/agent/types";
 import { createRun, getRun } from "@/lib/agent/events";
 import { runApplication, newRunId } from "@/lib/agent/runner";
+import { preflightResponse, withCors } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function OPTIONS() {
+  return preflightResponse();
+}
 
 const StartSchema = z.object({
   resume: ResumeSchema,
@@ -20,24 +25,28 @@ export async function POST(req: Request) {
     const body = await req.json();
     const parsed = StartSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.message }, { status: 400 });
+      return withCors(NextResponse.json({ error: parsed.error.message }, { status: 400 }));
     }
     const { resume, pdfBase64, jobUrl, provider, reviewMode } = parsed.data;
     const ats = detectATS(jobUrl);
     if (!ats) {
-      return NextResponse.json(
-        {
-          error:
-            "Unsupported ATS. This demo supports Lever (jobs.lever.co), Greenhouse (job-boards.greenhouse.io), and Ashby (jobs.ashbyhq.com).",
-        },
-        { status: 400 },
+      return withCors(
+        NextResponse.json(
+          {
+            error:
+              "Unsupported ATS. This demo supports Lever (jobs.lever.co), Greenhouse (job-boards.greenhouse.io), and Ashby (jobs.ashbyhq.com).",
+          },
+          { status: 400 },
+        ),
       );
     }
 
     if (provider === "google" && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "Gemini agent isn't configured — set GOOGLE_GENERATIVE_AI_API_KEY in .env.local" },
-        { status: 400 },
+      return withCors(
+        NextResponse.json(
+          { error: "Gemini agent isn't configured — set GOOGLE_GENERATIVE_AI_API_KEY in .env.local" },
+          { status: 400 },
+        ),
       );
     }
 
@@ -46,13 +55,12 @@ export async function POST(req: Request) {
 
     void runApplication({ runId, resume, resumePdfBase64: pdfBase64, jobUrl, ats, provider, reviewMode });
 
-    // Wait briefly so we can return liveUrl in the initial response
     const liveUrl = await waitForLiveUrl(runId, 8000);
 
-    return NextResponse.json({ runId, liveUrl, ats });
+    return withCors(NextResponse.json({ runId, liveUrl, ats }));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return withCors(NextResponse.json({ error: message }, { status: 500 }));
   }
 }
 

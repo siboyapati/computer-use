@@ -1,8 +1,13 @@
 import { getRun } from "@/lib/agent/events";
 import type { AgentEvent } from "@/lib/agent/types";
+import { corsHeaders, preflightResponse } from "@/lib/cors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function OPTIONS() {
+  return preflightResponse();
+}
 
 export async function GET(
   _req: Request,
@@ -14,7 +19,7 @@ export async function GET(
   if (!run) {
     return new Response(`event: error\ndata: ${JSON.stringify({ error: "Run not found" })}\n\n`, {
       status: 404,
-      headers: { "Content-Type": "text/event-stream" },
+      headers: { "Content-Type": "text/event-stream", ...corsHeaders() },
     });
   }
 
@@ -62,6 +67,7 @@ export async function GET(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      ...corsHeaders(),
     },
   });
 }

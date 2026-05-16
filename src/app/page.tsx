@@ -100,6 +100,43 @@ export default function Page() {
     setHistory(loadHistory());
   }, []);
 
+  // Deep-link: if the URL has ?runId=..., jump straight to the live phase.
+  // Used by the Chrome extension's "Open in new tab" flow after starting a run.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const runId = params.get("runId");
+    if (!runId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/runs/${runId}`);
+        if (!res.ok) {
+          toast.error("That run isn't available — start a new one");
+          return;
+        }
+        const body = (await res.json()) as { meta: RunMetadata };
+        if (cancelled) return;
+        dispatch({
+          type: "STARTED",
+          runId,
+          liveUrl: body.meta.liveUrl,
+          ats: body.meta.ats,
+        });
+        if (body.meta) dispatch({ type: "META", meta: body.meta });
+        // Drop ?runId= from the URL so refresh doesn't re-trigger
+        const url = new URL(window.location.href);
+        url.searchParams.delete("runId");
+        window.history.replaceState(null, "", url.toString());
+      } catch {
+        toast.error("Couldn't load the run");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Persist parsed résumé so it survives refresh
   useEffect(() => {
     if (state.resume && state.pdfBase64 && state.fileName) {

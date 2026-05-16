@@ -1,0 +1,53 @@
+{
+  "name": "autoapply-extension",
+  "displayName": "AutoApply",
+  "version": "0.1.0",
+  "description": "One-click apply on Lever, Greenhouse, and Ashby job postings — powered by a vision-driven AI agent.",
+  "author": "AutoApply",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "plasmo": "^0.90.5",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.290",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.18",
+    "typescript": "^5"
+  },
+  "manifest": {
+    "name": "AutoApply — One-click apply",
+    "description": "One-click apply on Lever, Greenhouse, and Ashby. Watch the agent fill your application live.",
+    "host_permissions": [
+      "https://*.lever.co/*",
+      "https://*.greenhouse.io/*",
+      "https://*.ashbyhq.com/*",
+      "http://localhost:3000/*"
+    ],
+    "permissions": [
+      "storage",
+      "tabs",
+      "activeTab"
+    ],
+    "externally_connectable": {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://127.0.0.1:3000/*",
+        "https://autoapply.com/*"
+      ]
+    },
+    "action": {
+      "default_title": "AutoApply"
+    }
+  }
+}

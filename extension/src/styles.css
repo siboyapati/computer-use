@@ -1,0 +1,50 @@
+/* Font — load Fraunces from Google Fonts. `@import` must come before
+   anything else, including @tailwind directives. */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..700,30..100&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+  }
+  body {
+    background-image:
+      radial-gradient(700px circle at 80% -10%, rgba(212, 255, 80, 0.06), transparent 55%),
+      radial-gradient(620px circle at -10% 100%, rgba(150, 110, 50, 0.06), transparent 55%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: var(--accent, #d4ff50);
+    color: #15170a;
+  }
+  /* Tailwind v3 base resets `*` border-color — let's stop that from breaking shadcn-ish defaults */
+  *,
+  ::before,
+  ::after {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(33, 31, 27, 0.6);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .gradient-accent {
+    background: linear-gradient(90deg, #d4ff50, #f5d54e);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .ring-accent {
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 0 36px rgba(212, 255, 80, 0.22);
+  }
+}

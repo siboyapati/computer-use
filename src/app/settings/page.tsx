@@ -14,6 +14,7 @@ import {
   EyeOff,
   Trash2,
   KeyRound,
+  Home,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -109,20 +110,34 @@ export default function SettingsPage() {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 220, damping: 28 }}
-        className="mx-auto w-full max-w-2xl px-6 pt-24 pb-16"
+        className="mx-auto w-full max-w-4xl px-6 pt-24 pb-16"
       >
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-          <SettingsIcon className="size-3 text-primary" />
-          Settings
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs uppercase tracking-[0.18em] text-muted-foreground shadow-card">
+            <SettingsIcon className="size-3 text-primary" />
+            Settings
+          </div>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-card transition hover:border-primary/40 hover:text-foreground"
+          >
+            <ArrowLeft className="size-3" />
+            Back to home
+          </Link>
         </div>
 
-        <h1 className="font-display text-4xl font-light leading-tight text-foreground md:text-5xl">
-          Settings
-        </h1>
-        <p className="mt-3 max-w-xl text-muted-foreground">
-          Bring your own keys and keep reusable answers for repeated application
-          questions. Everything here stays in this browser.
-        </p>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_0.8fr]">
+          <div>
+            <h1 className="font-display text-4xl font-light leading-tight text-foreground md:text-5xl">
+              Tune AutoApply before the next run.
+            </h1>
+            <p className="mt-3 max-w-xl text-muted-foreground">
+              Bring your own keys, keep reusable answers, and tailor company-specific responses.
+              Everything here stays in this browser.
+            </p>
+          </div>
+          <SettingsOverview />
+        </div>
 
         {!hydrated ? (
           <div className="mt-10 flex items-center gap-2 text-muted-foreground">
@@ -171,14 +186,67 @@ export default function SettingsPage() {
 
 function Header() {
   return (
-    <div className="pointer-events-none fixed left-6 top-5 z-30">
+    <>
+      <div className="pointer-events-none fixed left-6 top-5 z-30">
+        <Link
+          href="/"
+          className="pointer-events-auto inline-flex items-center gap-2 text-[12px] uppercase tracking-[0.28em] text-foreground/85"
+        >
+          <span className="font-display lowercase italic tracking-normal text-base">a/a</span>
+          <span className="hidden text-foreground/60 sm:inline">AutoApply</span>
+        </Link>
+      </div>
       <Link
         href="/"
-        className="pointer-events-auto inline-flex items-center gap-2 text-[12px] uppercase tracking-[0.28em] text-foreground/85"
+        className="fixed right-6 top-5 z-30 inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-2 text-xs text-muted-foreground shadow-card transition hover:border-primary/40 hover:text-foreground"
+        aria-label="Go home"
+        title="Back to home"
       >
-        <span className="font-display lowercase italic tracking-normal text-base">a/a</span>
-        <span className="hidden text-foreground/60 sm:inline">AutoApply</span>
+        <Home className="size-3.5" />
+        <span className="hidden sm:inline">Home</span>
       </Link>
+    </>
+  );
+}
+
+function SettingsOverview() {
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
+      <OverviewItem
+        icon={<KeyRound className="size-4" />}
+        title="Keys"
+        copy="Use local keys or server env fallbacks."
+      />
+      <OverviewItem
+        icon={<Check className="size-4" />}
+        title="Reusable answers"
+        copy="Common questions get answered consistently."
+      />
+      <OverviewItem
+        icon={<SettingsIcon className="size-4" />}
+        title="Company overrides"
+        copy="Keep tailored answers for repeat target companies."
+      />
+    </div>
+  );
+}
+
+function OverviewItem({
+  icon,
+  title,
+  copy,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  copy: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card/75 p-3 shadow-card">
+      <div className="flex items-center gap-2 text-primary">
+        {icon}
+        <div className="text-sm font-medium text-foreground">{title}</div>
+      </div>
+      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{copy}</p>
     </div>
   );
 }

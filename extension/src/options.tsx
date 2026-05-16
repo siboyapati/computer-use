@@ -78,9 +78,9 @@ function Options() {
         </h1>
 
         <p className="mt-5 max-w-lg text-[15px] text-sub leading-relaxed">
-          Pair this extension with your AutoApply web app once. After that, a floating button on
-          every Lever, Greenhouse, and Ashby posting fires a vision-driven agent that fills the
-          form for you — live, in a new tab, while you keep browsing.
+          Pair this extension with your AutoApply web app once. After that, an AutoApply button
+          appears beside the job page&apos;s own Apply button on Lever, Greenhouse, and Ashby, then
+          fires a vision-driven agent that fills the form live in a new tab.
         </p>
 
         {loading && (
@@ -221,9 +221,10 @@ function Options() {
               <p className="mt-2 text-[13px] text-sub leading-relaxed">
                 Visit a job on <span className="text-ink/85">Lever</span>,{" "}
                 <span className="text-ink/85">Greenhouse</span>, or{" "}
-                <span className="text-ink/85">Ashby</span>. A floating &ldquo;Apply with AutoApply&rdquo;
-                button appears bottom-right. Click it; a new tab opens with the agent already
-                filling the form. The agent pauses before the final submit — you click{" "}
+                <span className="text-ink/85">Ashby</span>. A &ldquo;One-click apply with AutoApply&rdquo;
+                button appears beside the page&apos;s own Apply button, with a compact dock in the
+                corner as backup. Click it; a new tab opens with the agent already filling the
+                form. The agent pauses before the final submit — you click{" "}
                 <span className="text-accent">Submit for real</span> when you&apos;re happy.
               </p>
             </div>

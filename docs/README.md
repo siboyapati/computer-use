@@ -25,7 +25,8 @@ Each file in [`features/`](./features/) covers a single feature end-to-end: what
 
 - [Résumé parser](./features/resume-parser.md) — PDF → strict JSON via Claude's PDF input
 - [Agent runner](./features/agent-runner.md) — Stagehand + Steel orchestration
-- [Field mapping](./features/field-mapping.md) — deterministic dictionary → EEO heuristics → LLM fallback
+- [Field mapping](./features/field-mapping.md) — deterministic dictionary → EEO privacy guard → profile extras → semantic saved answers → LLM fallback
+- [Profile & learning](./features/profile-learning.md) — persistent extras + Saved Answer Library reused across runs
 - [ATS adapters](./features/ats-adapters.md) — per-platform extraction + upload + submit
 - [Live browser stream](./features/live-stream.md) — Steel iframe + SSE event log
 - [Review-before-submit + Stop](./features/review-mode.md) — pause control, Submit-for-real button, abort

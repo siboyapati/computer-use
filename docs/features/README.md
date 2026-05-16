@@ -16,10 +16,10 @@ If you change a feature, update its file here *first*. The top-level docs (`01-v
 
 - [Résumé parser](./resume-parser.md) — PDF → strict JSON in one Claude call
 - [Agent runner](./agent-runner.md) — Stagehand + Steel orchestration
-- [Field mapping](./field-mapping.md) — Deterministic → Profile → EEO heuristic → LLM fallback
+- [Field mapping](./field-mapping.md) — Deterministic → EEO privacy guard → profile extras → semantic saved answers → LLM fallback
 - [ATS adapters](./ats-adapters.md) — Per-platform extract / upload / submit
 - [Live browser stream](./live-stream.md) — Steel iframe + SSE event log
-- [Profile & learning](./profile-learning.md) — Persistent extras + auto-learned Q&A reused across runs
+- [Profile & learning](./profile-learning.md) — Persistent extras + semantic Saved Answer Library reused across runs
 
 ## User controls
 

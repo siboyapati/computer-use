@@ -5,15 +5,15 @@
  * Five-tier strategy, cheapest-first:
  *   1.  Deterministic dictionary (regex on the label → résumé key).
  *       Zero tokens. Covers name/email/phone/LinkedIn/etc.
- *  1.5. Profile extras — structured ATS-specific fields the user
+ *  1.5. EEO heuristic for demographic fields. Returns an explicit
+ *       "decline" option if available, else empty string. This runs before
+ *       saved answers so sensitive demographic answers are never reused
+ *       accidentally.
+ *  1.6. Profile extras — structured ATS-specific fields the user
  *       pre-populated on the Settings page (work auth, salary, start
  *       date, etc). Zero tokens.
- *  1.6. Learned answers — exact match on a normalized question key.
- *       Populated automatically when the user types into a previously-
- *       skipped field in review mode. Zero tokens.
- *   2.  EEO heuristic for demographic fields. Returns an explicit
- *       "decline" option if available, else empty string. NEVER falls
- *       back to a real demographic answer — that's a privacy violation.
+ *  1.7. Learned answers — exact or semantic match on a normalized
+ *       question key. Populated from Settings or review mode. Zero tokens.
  *   3.  LLM fallback. One Claude call per question, with the résumé in a
  *       cacheable system block (cache_control: ephemeral) so 20 questions
  *       on the same form pay the résumé token cost once.
@@ -24,6 +24,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Resume } from "./types";
 import {
   extraToString,
+  findBestSemanticQuestionMatch,
   matchExtra,
   normalizeQuestion,
   type UserProfile,
@@ -146,13 +147,13 @@ function findDeclineOption(options: string[] | undefined): string | undefined {
 }
 
 /**
- * Look up a profile-derived answer for this field (Tiers 1.5 + 1.6).
+ * Look up a profile-derived answer for this field (Tiers 1.6 + 1.7).
  *
  * Priority order within the profile:
- *   - learnedAnswers (exact normalized-question match) — the user already
- *     answered this exact question on a previous run.
  *   - extras (heuristic label → structured field match) — the user filled
  *     in a known ATS field like "salary range" on the Settings page.
+ *   - learnedAnswers (exact or semantic normalized-question match) — the
+ *     user already answered this question or a close variant.
  *
  * Returns undefined when the profile has no relevant data.
  */
@@ -164,18 +165,7 @@ function profileAnswer(
   const learnedAnswers = profile.learnedAnswers ?? {};
   const extras = profile.extras ?? {};
 
-  // 1.6: exact-match against the learnedAnswers dictionary.
-  const key = normalizeQuestion(field.label);
-  const learned = key ? findSavedAnswer(key, learnedAnswers) : undefined;
-  if (learned && learned.answer) {
-    const timesUsed = learned.timesUsed ?? 0;
-    return {
-      value: learned.answer,
-      reasoning: timesUsed > 0 ? `saved answer (used ${timesUsed}x before)` : "saved answer",
-    };
-  }
-
-  // 1.5: heuristic match against structured `extras`.
+  // 1.6: heuristic match against structured `extras`.
   const extrasKey = matchExtra(field.label);
   if (extrasKey) {
     if (extrasKey === "salaryMin") {
@@ -201,42 +191,99 @@ function profileAnswer(
     if (v) return { value: v, reasoning: `profile: ${extrasKey}` };
   }
 
+  // 1.7: exact or semantic match against the learnedAnswers dictionary.
+  const key = normalizeQuestion(field.label);
+  const learned = key ? findSavedAnswer(key, learnedAnswers) : undefined;
+  if (learned?.answer) {
+    const timesUsed = learned.answer.timesUsed ?? 0;
+    return {
+      value: learned.answer.answer,
+      reasoning:
+        learned.score === 1
+          ? timesUsed > 0
+            ? `saved answer (used ${timesUsed}x before)`
+            : "saved answer"
+          : `semantic saved answer (${Math.round(learned.score * 100)}% match)`,
+    };
+  }
+
   return undefined;
 }
 
 function findSavedAnswer(
   fieldKey: string,
   learnedAnswers: UserProfile["learnedAnswers"],
-) {
+): { answer: UserProfile["learnedAnswers"][string]; score: number } | undefined {
   const exact = learnedAnswers[fieldKey];
-  if (exact) return exact;
+  if (exact) return { answer: exact, score: 1 };
 
-  for (const [savedKey, answer] of Object.entries(learnedAnswers)) {
-    if (!answer?.answer) continue;
-    if (isCompatibleSavedQuestion(fieldKey, savedKey)) return answer;
-  }
-  return undefined;
+  const match = findBestSemanticQuestionMatch(
+    fieldKey,
+    Object.keys(learnedAnswers).filter((key) => Boolean(learnedAnswers[key]?.answer)),
+  );
+  if (!match) return undefined;
+  return { answer: learnedAnswers[match.key], score: match.score };
 }
 
-function isCompatibleSavedQuestion(fieldKey: string, savedKey: string): boolean {
-  if (!fieldKey || !savedKey) return false;
-  if (fieldKey === savedKey) return true;
-  if (savedKey.length >= 20 && fieldKey.includes(savedKey)) return true;
-  if (fieldKey.length >= 20 && savedKey.includes(fieldKey)) return true;
+function coerceToOption(value: string, options: string[] | undefined): string {
+  if (!options || options.length === 0) return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
 
-  const patterns = [
-    /why.*(interest|join|work|role|company|opportun)/,
-    /(tell|anything).*about.*(yourself|you)/,
-    /(additional|anything).*information/,
-    /cover.*letter/,
-    /authorized.*work|work.*authorization|eligible.*work/,
-    /sponsor|visa.*support|immigration.*support/,
-    /salary|compensation|pay.*expect|expected.*pay/,
-    /when.*start|start.*date|availability/,
-    /how.*hear|where.*hear|how.*find/,
-  ];
+  const exact = options.find((option) => option === trimmed);
+  if (exact) return exact;
 
-  return patterns.some((pattern) => pattern.test(fieldKey) && pattern.test(savedKey));
+  const lower = trimmed.toLowerCase();
+  const caseInsensitive = options.find((option) => option.trim().toLowerCase() === lower);
+  if (caseInsensitive) return caseInsensitive;
+
+  const normalizedValue = normalizeOption(trimmed);
+  const normalized = options.map((option) => ({
+    option,
+    value: normalizeOption(option),
+  }));
+
+  const normalizedExact = normalized.find(({ value: optionValue }) => optionValue === normalizedValue);
+  if (normalizedExact) return normalizedExact.option;
+
+  const yesNoIntent = inferYesNoIntent(normalizedValue);
+  if (yesNoIntent) {
+    const yesNoMatch = normalized.find(({ value: optionValue }) =>
+      yesNoIntent === "yes"
+        ? optionValue === "yes" || optionValue.startsWith("yes ")
+        : optionValue === "no" || optionValue.startsWith("no "),
+    );
+    if (yesNoMatch) return yesNoMatch.option;
+  }
+
+  if (/\blater\b|\bfuture\b/.test(normalizedValue)) {
+    const laterMatch = normalized.find(({ value: optionValue }) =>
+      /\blater\b|\bfuture\b/.test(optionValue),
+    );
+    if (laterMatch) return laterMatch.option;
+  }
+
+  return value;
+}
+
+function normalizeOption(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function inferYesNoIntent(normalizedValue: string): "yes" | "no" | null {
+  if (/^(yes|yep|yeah|true)\b/.test(normalizedValue)) return "yes";
+  if (/^(no|nope|false)\b/.test(normalizedValue)) return "no";
+  if (/\b(do not|don t|dont|not require|not need|cannot|can not)\b/.test(normalizedValue)) {
+    return "no";
+  }
+  if (/\b(am|currently|already|legally)\b.*\b(authori|eligible|able)\b/.test(normalizedValue)) {
+    return "yes";
+  }
+  return null;
 }
 
 /**
@@ -259,13 +306,7 @@ export async function mapField(
     return { label: field.label, value: det, reasoning: "matched resume directly" };
   }
 
-  // Tier 1.5 + 1.6: profile.
-  const profileHit = profileAnswer(field, profile);
-  if (profileHit) {
-    return { label: field.label, value: profileHit.value, reasoning: profileHit.reasoning };
-  }
-
-  // Tier 2: EEO heuristic.
+  // Tier 1.5: EEO heuristic, before any saved profile answer.
   if (EEO_REGEX.test(field.label)) {
     const decline = findDeclineOption(field.options);
     return {
@@ -277,7 +318,29 @@ export async function mapField(
     };
   }
 
+  // Tier 1.6 + 1.7: profile.
+  const profileHit = profileAnswer(field, profile);
+  if (profileHit) {
+    const value = coerceToOption(profileHit.value, field.options);
+    return {
+      label: field.label,
+      value,
+      reasoning:
+        value === profileHit.value
+          ? profileHit.reasoning
+          : `${profileHit.reasoning}; matched option "${value}"`,
+    };
+  }
+
   // Tier 3: LLM fallback.
   const value = await answerCustomQuestion(field, resume, jobUrl, apiKey);
-  return { label: field.label, value, reasoning: "generated from resume" };
+  const optionValue = coerceToOption(value, field.options);
+  return {
+    label: field.label,
+    value: optionValue,
+    reasoning:
+      optionValue === value
+        ? "generated from resume"
+        : `generated from resume; matched option "${optionValue}"`,
+  };
 }

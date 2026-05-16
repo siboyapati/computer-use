@@ -175,7 +175,7 @@ What `mapField()` returns.
 interface FieldAnswer {
   label:     string;
   value:     string;          // empty string means "skip this field"
-  reasoning: string;          // "matched resume directly" | "EEO question — picked X" | "generated from resume"
+  reasoning: string;          // "matched resume directly" | "EEO question — picked X" | "profile: workAuthorization" | "saved answer" | "semantic saved answer (...% match)" | "generated from resume"
 }
 ```
 

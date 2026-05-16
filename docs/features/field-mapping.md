@@ -2,193 +2,179 @@
 
 ## What
 
-Given a form field (label, type, options) and a parsed `Resume` + the job URL, return the value the agent should fill into that field. The mapping uses a three-tier strategy:
+Given a form field (label, type, options), a parsed `Resume`, an optional `UserProfile`, and the job URL, return the value the agent should fill.
 
-1. **Deterministic dictionary** — regex on the label → key into `Resume`. Zero LLM tokens.
-2. **EEO heuristic** — if the label looks demographic, pick the first "decline to answer" option, or fall back to the last option to avoid blocking submit on a required field.
-3. **LLM fallback** — single Claude call with the résumé in the cacheable system prompt, asking it to generate an answer grounded in the résumé.
+The mapper uses a cheapest-first strategy:
+
+1. **Deterministic dictionary** — regex on the label -> key into `Resume`. Zero LLM tokens.
+2. **EEO privacy guard** — if the label looks demographic, pick an explicit decline option when present; otherwise leave blank.
+3. **Profile extras** — structured saved values such as work authorization, salary, start date, relocation, and referral source.
+4. **Saved answers** — exact normalized key first, then local semantic question matching for wording variants.
+5. **LLM fallback** — single Claude call with the resume in a cacheable system prompt.
 
 ## Why
 
-The naive approach — "ask Claude what to put in every field" — costs too much (one LLM call per field × ~20 fields = $$$) and adds latency (~1s per call × 20 = 20s overhead per application).
+The naive "ask Claude for every field" path costs more and adds latency. The naive hardcoded path fails on custom questions such as "Why are you interested in this role?"
 
-The naive deterministic approach — "hardcode common labels" — fails on custom questions like *"Why are you interested in this role?"* or *"Describe a project you're proud of."*
-
-The three-tier strategy hits the sweet spot:
-
-- **Common identity fields** (name, email, phone, LinkedIn) — deterministic, zero cost. Covers ~60% of typical ATS forms.
-- **EEO / demographic** — heuristic + decline-by-default. Privacy-respecting, requires no user input.
-- **Custom prose** — LLM, but with **prompt caching** on the résumé block so the per-question cost is just the question + answer tokens (not the full résumé every time).
+This tiering keeps common fields instant, protects demographic fields, reuses the user's own saved answers for repeat questions, and only asks the model when the app has no grounded answer.
 
 ## How
 
 ### Files
 
-- [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts) — the full mapping logic.
+- [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts) — full mapping logic.
+- [src/lib/agent/profile-types.ts](../../src/lib/agent/profile-types.ts) — profile types, normalization, extras matching, and local semantic question embeddings.
+- [src/lib/profile.ts](../../src/lib/profile.ts) — client-side profile persistence and preview helpers.
 
 ### Entry point
 
 ```ts
-export async function mapField(field, resume, jobUrl): Promise<FieldAnswer> {
-  // 1. Deterministic
+export async function mapField(field, resume, jobUrl, apiKey, profile): Promise<FieldAnswer> {
   const det = deterministicAnswer(field, resume);
   if (det) return { label, value: det, reasoning: "matched resume directly" };
 
-  // 2. EEO heuristic
   if (EEO_REGEX.test(field.label)) {
     const decline = findDeclineOption(field.options);
-    return { label, value: decline ?? "", reasoning: "EEO question — picked decline" };
+    return {
+      label,
+      value: decline ?? "",
+      reasoning: decline
+        ? `EEO question — picked "${decline}"`
+        : "EEO question — no decline option, left blank",
+    };
   }
 
-  // 3. LLM fallback
-  const value = await answerCustomQuestion(field, resume, jobUrl);
+  const profileHit = profileAnswer(field, profile);
+  if (profileHit) return profileHit;
+
+  const value = await answerCustomQuestion(field, resume, jobUrl, apiKey);
   return { label, value, reasoning: "generated from resume" };
 }
 ```
 
 ### Tier 1 — Deterministic dictionary
 
-```ts
-const DETERMINISTIC: Array<{ match: RegExp; key: (r: Resume) => string }> = [
-  { match: /^(full\s*)?name$/i,          key: (r) => r.personal.fullName },
-  { match: /first\s*name|given\s*name|forename/i, key: (r) => r.personal.firstName },
-  { match: /last\s*name|surname|family\s*name/i,  key: (r) => r.personal.lastName },
-  { match: /^e?-?mail( address)?$/i,     key: (r) => r.personal.email },
-  { match: /phone|mobile|cell|telephone/i, key: (r) => r.personal.phone },
-  { match: /linked\s*in/i,               key: (r) => r.personal.linkedin },
-  { match: /github|git hub/i,            key: (r) => r.personal.github },
-  { match: /portfolio|website|personal\s*site|url/i, key: (r) => r.personal.website },
-  { match: /^(city|location|where.*based|address|current location)/i, key: (r) => r.personal.location },
-  { match: /current\s*(company|employer)/i, key: (r) => r.experience[0]?.company ?? "" },
-  { match: /current\s*(title|role|position)/i, key: (r) => r.experience[0]?.title ?? "" },
-  { match: /^school|university|college/i, key: (r) => r.education[0]?.school ?? "" },
-  { match: /^degree/i,                   key: (r) => r.education[0]?.degree ?? "" },
-  { match: /^headline|tagline/i,         key: (r) => r.headline },
-];
-```
+The `DETERMINISTIC` array maps common labels to `Resume` fields:
 
-The first match wins. Empty results fall through (so a `linkedin` field on a résumé without a LinkedIn URL goes to the LLM fallback, which will likely return an empty string).
+- name, first name, last name
+- email, phone
+- LinkedIn, GitHub, portfolio / website
+- city / location
+- current company / title
+- school / degree
+- headline
 
-### Tier 2 — EEO heuristic
+The first non-empty match wins. Empty results fall through so missing resume fields do not block better fallback behavior.
+
+### Tier 1.5 — EEO privacy guard
 
 ```ts
 const DECLINE_REGEX = /decline|prefer not|do not wish|don.?t wish|rather not|not.*say|not.*answer|wish.*disclose/i;
 const EEO_REGEX = /race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun|orientation|identify/i;
-
-function findDeclineOption(options: string[] | undefined): string | undefined {
-  if (!options || options.length === 0) return undefined;
-  return options.find((o) => DECLINE_REGEX.test(o)) ?? options[options.length - 1];
-}
 ```
 
-If the field is demographic AND has options (a dropdown or radio group):
+If a field looks demographic, the mapper searches its options for a decline-style answer such as "Prefer not to say". If none exists, it returns an empty string and the runner skips the field.
 
-1. Look for an option matching `DECLINE_REGEX`.
-2. If none found, **fall back to the last option** in the list.
+Important: the mapper does **not** fall back to the last dropdown option. A last option may be a real demographic answer, so silently submitting it would be a privacy bug. Because this tier runs before profile saved answers, even a previously saved demographic answer cannot be reused automatically.
 
-The fallback is critical: if the field is required and we leave it blank, submit silently fails. Picking *any* option (typically "Other" or a similar last entry) keeps the application valid. Yes, this is a compromise — but the alternative (asking the user mid-run) breaks the demo flow.
+### Tier 1.6 — Profile extras
 
-Privacy posture: declining by default is the safest play. Some users will want to opt in (e.g., to qualify for diversity programs). That's a **deferred** feature — would require a toggle in the Confirm screen and per-category storage.
+`matchExtra()` maps labels to structured profile fields:
+
+```ts
+matchExtra("Are you authorized to work in the US?") // "workAuthorization"
+matchExtra("Salary expectations")                  // "salaryMin"
+matchExtra("Earliest start date")                  // "earliestStartDate"
+matchExtra("Are you willing to relocate?")         // "willingToRelocate"
+matchExtra("How did you hear about us?")           // "howDidYouHear"
+```
+
+For salary questions, the mapper formats a range when both min and max are available. Booleans become `Yes` / `No`. For select fields, saved free-form answers are coerced to matching options where safe, so "Yes, I am authorized..." can fill a `Yes` option.
+
+### Tier 1.7 — Saved answers
+
+Saved answers are keyed by `normalizeQuestion(label)`, which strips case, trailing required markers, punctuation, and repeated whitespace.
+
+Exact matches are tried first. If exact lookup misses, `findBestSemanticQuestionMatch()` builds a small local semantic embedding from:
+
+- normalized tokens and bigrams
+- aliases such as `job`, `position`, and `opportunity` -> `role`
+- intent concepts for motivation, work authorization, sponsorship, compensation, start date, referral source, relocation, experience, and additional info
+- low-weight character n-grams for spelling variants
+
+This catches variants such as:
+
+- saved: "Why are you interested in this role?"
+- incoming: "Why this job?"
+- incoming: "What interests you?"
+- incoming: "What interests you about this opportunity?"
+
+Accepted semantic matches emit reasoning like `"semantic saved answer (55% match)"`.
 
 ### Tier 3 — LLM fallback with prompt caching
 
-```ts
-async function answerCustomQuestion(field, resume, jobUrl): Promise<string> {
-  const isLong = field.type === "textarea";
-  const resumeBlock = `You are filling out a job application on behalf of a candidate. Answer concisely and truthfully based ONLY on the candidate's resume. Do not invent experience. If the question asks "why are you interested", reference real overlap between the candidate's background and the role. If you genuinely cannot answer from the resume, return an empty string.
+For anything still unresolved, `answerCustomQuestion()` asks Claude for a grounded answer:
 
-Candidate resume (JSON):
-${JSON.stringify(resume, null, 2)}`;
+- system block: cacheable resume JSON with `cache_control: { type: "ephemeral" }`
+- user block: field label, field type, options, and "Return ONLY the value"
+- max tokens: shorter for inputs, larger for textareas
 
-  const response = await anthropic.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: isLong ? 400 : 80,
-    system: [
-      { type: "text", text: resumeBlock, cache_control: { type: "ephemeral" } },  // ← prompt cache
-      { type: "text", text: `Job URL: ${jobUrl}` },
-    ],
-    messages: [{
-      role: "user",
-      content: `Form field label: "${field.label}"
-Field type: ${field.type}
-${field.options ? `Options (pick one verbatim if matching): ${field.options.join(" | ")}` : ""}
+If the model cannot answer from the resume, it is instructed to return an empty string. The runner skips empty values and surfaces required skipped fields in review mode.
 
-Return ONLY the value to enter into this field. No preamble, no quotes, no commentary.`,
-    }],
-  });
+### Dropdown option coercion
 
-  // Strip surrounding quotes if the model wrapped its answer
-  return text.trim().replace(/^["']|["']$/g, "");
-}
-```
+Profile and LLM answers can be free-form while ATS select fields expect exact options. Before returning profile or LLM values, the mapper tries safe coercions:
 
-#### Why prompt caching matters
+- exact option
+- case-insensitive option
+- normalized punctuation-insensitive option
+- yes/no intent, including "No, I do not require sponsorship" -> `No`
+- later/future intent for sponsorship-style fields
 
-A typical custom-question form has 3–10 questions. Without caching:
-
-- 10 questions × ~2 KB résumé JSON × 1M tokens per $1 input = ~$0.02 per form
-- 10 sequential API calls = ~10 seconds of latency
-
-With `cache_control: { type: "ephemeral" }` on the résumé block:
-
-- First call writes the cache (~$0.025 × 1.25 base rate).
-- Subsequent 9 calls hit the cache (~$0.025 × 0.1 cache rate).
-- Total ~70% cheaper on input tokens, plus latency benefits.
-
-The cache key is hashed from the system prompt, so two runs on the same résumé share the cache window (5 min TTL on Anthropic). Two users with different résumés get separate cache entries.
-
-#### Why "return an empty string" for unanswerable questions
-
-If the LLM can't ground an answer in the résumé, we'd rather skip the field than hallucinate. The runner skips fields with empty values:
-
-```ts
-if (!answer.value) {
-  emit("field_filled", `Skipped ${label} (no value)`, { skipped: true });
-  continue;
-}
-```
-
-The user sees the skip in the event log and can manually fill the field in the live browser before clicking "Submit for real" (review mode).
-
-### Hard caps
-
-The runner applies a per-run cap before iterating:
-
-```ts
-const MAX_FIELDS_TO_FILL = 40;
-const fillable = form.fields.filter((f) => f.type !== "file").slice(0, MAX_FIELDS_TO_FILL);
-```
-
-If the form has more than 40 fillable fields, we cap and emit an error event so the user knows. 40 is more than any reasonable ATS form should have; this is the cost-runaway guard.
+If none of these are clear, the original answer is preserved and Stagehand gets a chance to fill it.
 
 ## Gotchas
 
-- **Field labels with trailing asterisks** (`"Email *"`) — the runner strips trailing `*` in `tryFillByLabel`, but the field-mapper sees the raw label. If a deterministic regex doesn't match because of `*`, we fall to LLM. The LLM does the right thing anyway.
-- **`current company` matches "Why do you want to work at our current company?"** — overly broad regex would mismap. We anchor with `current\s*(company|employer)` which is reasonably tight, but a malicious or weird label could still hit it. The LLM fallback handles edge cases.
-- **EEO regex `disab` matches "disable account"** — unlikely in a job application form, but worth knowing. In practice the only place we see `disab` is in disability disclosure questions.
-- **Empty option lists.** If an EEO question is a free-text field instead of a dropdown, `findDeclineOption` returns `undefined` → empty value → field skipped. This is correct: don't disclose what wasn't asked as multiple-choice.
-- **Cache hits depend on identical system prompt bytes.** Reformatting the résumé JSON (changing whitespace, key order) blows the cache. Stick with `JSON.stringify(resume, null, 2)`.
-- **No retry on Anthropic 429.** Single failure → empty value → field skipped. User sees the skip and can fill manually.
+- **Semantic matching is local, not hosted.** It is deterministic and cheap, but not a general-purpose embedding model.
+- **EEO fields without decline options are left blank.** Review mode lets the user decide manually.
+- **Salary questions are inherently fuzzy.** A single salary-shaped label may mean minimum, desired, or range. Users can override specific labels in the Saved Answer Library.
+- **Prompt cache hits depend on identical resume-block bytes.** Keep `JSON.stringify(resume, null, 2)` stable.
+- **No retry on provider 429.** A per-field error logs and the run continues.
 
 ## Verification
 
-The field-mapper has no standalone smoke test (it's an internal function). Verify indirectly via the agent runner:
+Automated semantic/profile coverage:
 
-1. Run a real application on a Lever job with a known set of fields.
-2. Watch the event log — each "Filled ..." event includes a `reasoning` field in its `data`:
-   - `"matched resume directly"` → deterministic tier
-   - `"EEO question — picked decline"` or `"...left blank"` → EEO tier
-   - `"generated from resume"` → LLM tier
-3. Confirm via cost monitoring that the total run cost is well under $0.10 (most should land at $0.02–$0.05).
+```bash
+npm run test:semantic
+```
 
-If too many fields say `"generated from resume"`, the deterministic dictionary needs an entry. Add a regex + key mapping in the `DETERMINISTIC` array.
+Type and lint checks:
+
+```bash
+npx tsc --noEmit
+npm run lint
+```
+
+Manual smoke test:
+
+1. Visit `/settings`.
+2. Save work authorization and a reusable answer for "Why are you interested in this role?"
+3. Run a Lever/Greenhouse/Ashby application with review mode on.
+4. Confirm event-log reasoning:
+   - `"matched resume directly"` -> deterministic tier
+   - `"EEO question — picked ..."` or `"no decline option, left blank"` -> EEO privacy guard
+   - `"profile: workAuthorization"` -> profile extras
+   - `"saved answer"` or `"semantic saved answer (...% match)"` -> Saved Answer Library
+   - `"generated from resume"` -> LLM fallback
 
 ## Failure modes
 
 | Failure | What you see | Mitigation |
 |---|---|---|
-| Common field falls through to LLM | More tokens spent than necessary, but still works | Add regex to `DETERMINISTIC` |
-| EEO field with no decline option | Last option auto-picked, may not be what user wants | Acceptable for demo; v2 = user opt-in toggle |
-| LLM hallucinates | Wrong value gets filled | Review mode catches this; user fixes manually before submit |
-| Anthropic rate-limit | Per-field call fails; field skipped | Other fields still proceed; user re-runs or fills manually |
-| Form has 80 fields | Capped at 40, error event emitted | The user can fill remaining manually in the live browser before "Submit for real" |
+| Common field falls through to LLM | More tokens spent than necessary | Add regex to `DETERMINISTIC` |
+| EEO field with no decline option | Field skipped, required row appears in review mode | User fills manually |
+| Saved answer variant below threshold | LLM fallback fires | Add that wording as a custom saved answer or tune semantic patterns |
+| Select option cannot be coerced | Deterministic select fill fails, Stagehand `act()` fallback tries | Add a saved answer that matches the ATS option text |
+| LLM hallucinates | Wrong value gets filled | Review mode catches this before submit |
+| Form has 80 fields | Capped at 40, error event emitted | User fills remaining fields manually |

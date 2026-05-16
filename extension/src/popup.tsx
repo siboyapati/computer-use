@@ -64,7 +64,7 @@ function Popup() {
           first.
         </h2>
         <p className="mt-2 text-[13px] text-sub">
-          Pair this extension with your AutoApply web app to enable one-click apply.
+          Pair once, then job pages get their own AutoApply button beside Apply.
         </p>
         <button
           className="mt-4 w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-accent text-[#15170a] font-medium px-4 py-2.5 text-[14px] transition hover:opacity-90"
@@ -98,26 +98,31 @@ function Popup() {
 
       {/* Active-tab apply CTA */}
       {isPosting ? (
-        <button
-          onClick={handleApply}
-          disabled={applying}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-accent text-[#15170a] font-medium px-4 py-3 text-[14px] transition hover:-translate-y-0.5 hover:shadow-glow disabled:opacity-60 disabled:hover:translate-y-0"
-        >
-          {applying ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              Spinning up the agent…
-            </>
-          ) : (
-            <>
-              <Sparkles className="size-4" />
-              Apply to this {ats === "lever" ? "Lever" : ats === "greenhouse" ? "Greenhouse" : "Ashby"} job
-            </>
-          )}
-        </button>
+        <div className="flex flex-col gap-2">
+          <div className="rounded-2xl border border-accent-line bg-accent-dim px-3.5 py-2 text-[12px] text-ink/85">
+            AutoApply is available directly on this job page, next to the site&apos;s Apply button.
+          </div>
+          <button
+            onClick={handleApply}
+            disabled={applying}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-accent text-[#15170a] font-medium px-4 py-3 text-[14px] transition hover:-translate-y-0.5 hover:shadow-glow disabled:opacity-60 disabled:hover:translate-y-0"
+          >
+            {applying ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Spinning up the agent…
+              </>
+            ) : (
+              <>
+                <Sparkles className="size-4" />
+                Apply to this {ats === "lever" ? "Lever" : ats === "greenhouse" ? "Greenhouse" : "Ashby"} job
+              </>
+            )}
+          </button>
+        </div>
       ) : (
         <div className="rounded-2xl border border-line bg-white/[0.02] px-3.5 py-3 text-[12px] text-muted">
-          Open a Lever, Greenhouse, or Ashby posting and the apply button appears.
+          Open a Lever, Greenhouse, or Ashby posting and AutoApply appears beside the page&apos;s Apply button.
         </div>
       )}
 

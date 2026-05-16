@@ -8,7 +8,7 @@ The agent runner is the **orchestrator**. Given a parsed `Resume`, a job URL, a 
 2. Connects Stagehand v3 over CDP.
 3. Navigates to the job page.
 4. Dispatches to the per-ATS adapter to extract the form schema.
-5. Fills every field (deterministic → EEO heuristic → LLM fallback).
+5. Fills every field (deterministic → EEO privacy guard → profile extras/saved answers → LLM fallback).
 6. Uploads the résumé PDF via Playwright's `setInputFiles`.
 7. Optionally pauses for human review.
 8. Clicks Submit.
@@ -65,7 +65,7 @@ runApplication({ runId, resume, pdfBase64, jobUrl, ats, provider, reviewMode })
   ├─ for each fillable field (capped at 40):
   │     bail()
   │     answer = await mapField(field, resume, jobUrl)
-  │     if !answer.value: emit("field_filled", "Skipped ...", { skipped: true }); continue
+  │     if !answer.value: emit("field_filled", "Skipped ...", { skipped: true, reasoning }); continue
   │     await fillSingleField(stagehand, field, answer.value)
   │     emit("field_filled", "Filled ${label}", { label, value: redacted, reasoning })
   ├─ if form.resumeFieldLabel:

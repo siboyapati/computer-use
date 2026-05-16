@@ -23,7 +23,7 @@ computer-use/
 │       ├── options.tsx                    # options page (Tailwind)
 │       ├── styles.css                     # Tailwind directives + Fraunces import
 │       ├── contents/
-│       │   └── overlay.ts                 # floating button content script (vanilla, shadow DOM)
+│       │   └── overlay.ts                 # inline apply CTA + dock content script (vanilla, shadow DOM)
 │       └── lib/
 │           ├── types.ts                   # Resume + StoredConfig + message types
 │           ├── detect.ts                  # ATS hostname detection (mirror of web app)
@@ -65,7 +65,7 @@ computer-use/
             ├── events.ts                  # Map<runId,...> + emit/finish/prune/stop/submit
             ├── steel.ts                   # Steel SDK wrapper (createSession, release)
             ├── resume-parser.ts           # Anthropic PDF input + tool_use
-            ├── field-mapper.ts            # deterministic + EEO + LLM-fallback mapping
+            ├── field-mapper.ts            # deterministic + EEO + profile/saved answers + LLM fallback
             ├── runner.ts                  # Stagehand orchestration + ATS dispatch
             └── adapters/
                 ├── lever.ts               # Lever extract / upload / submit
@@ -277,13 +277,21 @@ mapField(field, resume, jobUrl) {
        /^degree/i           → r.education[0]?.degree
        /^headline|tagline/i → r.headline
 
-  2. EEO heuristic — if field.label matches
+  2. EEO privacy guard — if field.label matches
        /race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun|orientation|identify/i
      pick first option matching
        /decline|prefer not|do not wish|don.?t wish|rather not|not.*say|wish.*disclose/i
-     fall back to the LAST option if no decline-style match (avoids submitting blank required field).
+     otherwise return an empty value so the user can decide manually.
 
-  3. LLM fallback — single Anthropic call:
+  3. Profile extras — match structured saved values such as work authorization,
+     sponsorship, salary, start date, relocation, years experience, and referral
+     source. Select/radio answers are coerced to exact options when safe.
+
+  4. Saved answers — exact normalized question key first, then local semantic
+     embedding match for variants such as "Why this job?" vs
+     "What interests you about this role?"
+
+  5. LLM fallback — single Anthropic call:
        - system: cacheable résumé block (cache_control: ephemeral)
        - user: "Form field label: <label>\nField type: <type>\nOptions: <list>\n\nReturn ONLY the value."
 }

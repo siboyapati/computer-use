@@ -14,7 +14,10 @@
  *     review mode and clicks "Save for next time".
  *
  *  The field-mapper consults both before falling back to the LLM call,
- *  giving zero-cost answers to repeat questions.
+ *  giving zero-cost answers to repeat questions. Question variants are
+ *  matched with a local semantic embedding so "Why this job?" can reuse
+ *  "What interests you about this role?" without calling an external
+ *  embeddings API.
  */
 
 export interface ProfileExtras {
@@ -76,6 +79,223 @@ export function normalizeQuestion(label: string): string {
     .replace(/[?:.!,;"'`]/g, "")     // punctuation
     .replace(/\s+/g, " ")            // collapse whitespace
     .trim();
+}
+
+export interface SemanticQuestionMatch {
+  key: string;
+  score: number;
+}
+
+export const SEMANTIC_QUESTION_MATCH_THRESHOLD = 0.52;
+
+const STOPWORDS = new Set([
+  "a",
+  "about",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "can",
+  "could",
+  "do",
+  "does",
+  "for",
+  "from",
+  "have",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "our",
+  "please",
+  "required",
+  "that",
+  "the",
+  "this",
+  "to",
+  "us",
+  "we",
+  "with",
+  "you",
+  "your",
+]);
+
+const TOKEN_ALIASES: Record<string, string> = {
+  applying: "apply",
+  application: "apply",
+  attracted: "interest",
+  attractive: "interest",
+  compensation: "salary",
+  eligibility: "eligible",
+  employer: "company",
+  excited: "interest",
+  exciting: "interest",
+  hear: "source",
+  heard: "source",
+  interested: "interest",
+  interesting: "interest",
+  interests: "interest",
+  job: "role",
+  joining: "join",
+  opportunity: "role",
+  organization: "company",
+  position: "role",
+  referred: "referral",
+  referring: "referral",
+  relocation: "relocate",
+  salary: "salary",
+  sponsorship: "sponsor",
+  start: "start",
+  starting: "start",
+  visa: "sponsor",
+  work: "work",
+};
+
+const CONCEPT_PATTERNS: Array<{ concept: string; match: RegExp }> = [
+  {
+    concept: "intent_interest_motivation",
+    match: /\b(why|interest|interests|interested|attract|appeal|motivat|excite|excited|want|drawn|apply|join)\b/,
+  },
+  {
+    concept: "intent_interest_role",
+    match:
+      /\b(why|interest|interests|interested|attract|appeal|motivat|excite|want|drawn|apply|join)\b.*\b(role|job|position|opportunity|company|team|work|here)\b|\b(role|job|position|opportunity|company|team|work|here)\b.*\b(interest|interests|interested|attract|appeal|motivat|excite|want|drawn|apply|join)\b/,
+  },
+  {
+    concept: "intent_work_authorization",
+    match: /(authori|eligible|eligib|legal|right).*(work|employ)|(work|employ).*(authori|eligible|eligib|legal|right)/,
+  },
+  {
+    concept: "intent_sponsorship",
+    match: /sponsor|visa.*support|immigration.*support|work.*visa/,
+  },
+  {
+    concept: "intent_compensation",
+    match: /salary|compensation|pay.*expect|expected.*pay|comp.*range|desired.*pay/,
+  },
+  {
+    concept: "intent_start_date",
+    match: /start.*date|when.*start|availability.*date|available.*start|earliest/,
+  },
+  {
+    concept: "intent_referral_source",
+    match: /how.*hear|where.*hear|how.*find|where.*find|source|referred|referral/,
+  },
+  {
+    concept: "intent_relocation",
+    match: /relocat|willing.*move/,
+  },
+  {
+    concept: "intent_experience_years",
+    match: /years.*experience|how.*long.*experience/,
+  },
+  {
+    concept: "intent_additional_info",
+    match: /(anything|additional).*information|anything.*else|cover.*letter/,
+  },
+];
+
+export function semanticQuestionSimilarity(left: string, right: string): number {
+  const leftEmbedding = embedQuestion(left);
+  const rightEmbedding = embedQuestion(right);
+  return cosineSimilarity(leftEmbedding, rightEmbedding);
+}
+
+export function findBestSemanticQuestionMatch(
+  labelOrKey: string,
+  candidateKeys: Iterable<string>,
+  threshold = SEMANTIC_QUESTION_MATCH_THRESHOLD,
+): SemanticQuestionMatch | null {
+  const fieldKey = normalizeQuestion(labelOrKey);
+  if (!fieldKey) return null;
+
+  let best: SemanticQuestionMatch | null = null;
+  for (const candidateKey of candidateKeys) {
+    const key = normalizeQuestion(candidateKey) || candidateKey;
+    if (!key) continue;
+    if (key === fieldKey) return { key: candidateKey, score: 1 };
+
+    const score = semanticQuestionSimilarity(fieldKey, key);
+    if (!best || score > best.score) best = { key: candidateKey, score };
+  }
+
+  return best && best.score >= threshold ? best : null;
+}
+
+function embedQuestion(question: string): Map<string, number> {
+  const normalized = normalizeQuestion(question);
+  const vector = new Map<string, number>();
+  const tokens = normalized
+    .split(" ")
+    .map(canonicalToken)
+    .filter((token) => token.length > 1 && !STOPWORDS.has(token));
+
+  for (const token of tokens) addFeature(vector, `tok:${token}`, 1);
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    addFeature(vector, `bi:${tokens[i]}_${tokens[i + 1]}`, 1.35);
+  }
+
+  for (const { concept, match } of CONCEPT_PATTERNS) {
+    if (match.test(normalized)) addFeature(vector, `concept:${concept}`, 3);
+  }
+
+  // Character n-grams give a little resilience for labels like
+  // "authorised" vs "authorized" without overpowering intent concepts.
+  const compact = normalized.replace(/\s+/g, "");
+  for (let i = 0; i <= compact.length - 4; i += 1) {
+    addFeature(vector, `char:${compact.slice(i, i + 4)}`, 0.18);
+  }
+
+  return vector;
+}
+
+function canonicalToken(token: string): string {
+  const trimmed = token
+    .replace(/’/g, "'")
+    .replace(/'s$/g, "")
+    .replace(/[^a-z0-9]/g, "");
+  if (!trimmed) return "";
+  const aliased = TOKEN_ALIASES[trimmed] ?? trimmed;
+  return TOKEN_ALIASES[stemToken(aliased)] ?? stemToken(aliased);
+}
+
+function stemToken(token: string): string {
+  if (token.length <= 4) return token;
+  return token
+    .replace(/ization$/g, "ize")
+    .replace(/isation$/g, "ize")
+    .replace(/ments$/g, "ment")
+    .replace(/ing$/g, "")
+    .replace(/ed$/g, "")
+    .replace(/ies$/g, "y")
+    .replace(/s$/g, "");
+}
+
+function addFeature(vector: Map<string, number>, feature: string, weight: number): void {
+  vector.set(feature, (vector.get(feature) ?? 0) + weight);
+}
+
+function cosineSimilarity(left: Map<string, number>, right: Map<string, number>): number {
+  if (left.size === 0 || right.size === 0) return 0;
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+
+  for (const value of left.values()) leftNorm += value * value;
+  for (const value of right.values()) rightNorm += value * value;
+
+  const [small, large] = left.size < right.size ? [left, right] : [right, left];
+  for (const [feature, value] of small.entries()) {
+    dot += value * (large.get(feature) ?? 0);
+  }
+
+  if (leftNorm === 0 || rightNorm === 0) return 0;
+  return dot / Math.sqrt(leftNorm * rightNorm);
 }
 
 /**

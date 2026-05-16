@@ -14,6 +14,9 @@
 
 import {
   EMPTY_PROFILE,
+  extraToString,
+  findBestSemanticQuestionMatch,
+  matchExtra,
   normalizeQuestion,
   type LearnedAnswer,
   type ProfileExtras,
@@ -170,9 +173,39 @@ export function previewProfileAnswer(
   profile?: UserProfile,
 ): { value: string; source: "extras" | "learned" } | undefined {
   const p = profile ?? loadProfile();
+  const extras = p.extras ?? {};
+  const extrasKey = matchExtra(label);
+  if (extrasKey) {
+    if (extrasKey === "salaryMin") {
+      const min = extras.salaryMin;
+      const max = extras.salaryMax;
+      const cur = extras.salaryCurrency || "USD";
+      if (min && max) {
+        return {
+          value: `${cur} ${min.toLocaleString()}–${max.toLocaleString()}`,
+          source: "extras",
+        };
+      }
+      if (min) return { value: `${cur} ${min.toLocaleString()}`, source: "extras" };
+    }
+    const value = extraToString(extras[extrasKey]);
+    if (value) return { value, source: "extras" };
+  }
+
   const key = normalizeQuestion(label);
-  const learned = p.learnedAnswers[key];
+  const learnedAnswers = p.learnedAnswers ?? {};
+  const learned = learnedAnswers[key];
   if (learned) return { value: learned.answer, source: "learned" };
+
+  const semanticMatch = findBestSemanticQuestionMatch(
+    label,
+    Object.keys(learnedAnswers).filter((candidate) => Boolean(learnedAnswers[candidate]?.answer)),
+  );
+  if (semanticMatch) {
+    const match = learnedAnswers[semanticMatch.key];
+    if (match?.answer) return { value: match.answer, source: "learned" };
+  }
+
   return undefined;
 }
 

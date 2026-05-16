@@ -4,7 +4,7 @@
 
 A Plasmo-built Chrome extension that adds a "one-click apply" button on every supported job posting. After a one-time pairing handshake with the web app, the user can:
 
-- Visit a Lever / Greenhouse / Ashby posting and see a floating **Apply with AutoApply** button bottom-right.
+- Visit a Lever / Greenhouse / Ashby posting and see an inline **One-click apply with AutoApply** button beside the ATS's own Apply button, plus a compact bottom-right quick-apply dock.
 - Click it → a new tab opens with the agent already filling the form.
 - Or click the toolbar icon → see status, résumé summary, and a contextual "Apply to this Lever job" button when the active tab is on a supported posting.
 
@@ -16,7 +16,7 @@ The web app's flow is: drop résumé → paste URL → click Start. Already shor
 
 The extension closes that gap with three design choices:
 
-1. **Floating button on the page itself** — the "magic appears when I need it" pattern, like Honey or Rakuten. Most surface area, highest discoverability.
+1. **Inline button on the job description** — the agent CTA appears next to the native ATS Apply button, so the user does not need to open the toolbar popup.
 2. **Web-app pairing for résumé** — the web app is the source of truth. The extension just gets a copy via a one-time handshake. Avoids a second "drop your résumé here" UI in the extension.
 3. **New tab for the live run** — keeps the user on the job page in their original tab; the agent runs in a separate window they can keep open while browsing more.
 
@@ -43,7 +43,7 @@ extension/
     ├── options.tsx            # options page
     ├── styles.css             # Tailwind + Fraunces import
     ├── contents/
-    │   └── overlay.ts         # floating button content script
+    │   └── overlay.ts         # inline apply CTA + dock content script
     └── lib/
         ├── types.ts           # Resume + StoredConfig + messages
         ├── detect.ts          # detectATS + isLikelyValidPostingUrl
@@ -123,7 +123,7 @@ The handshake uses Chrome's `externally_connectable` API — the cleanest patter
        a. Validates the message shape.
        b. Writes the config to chrome.storage.local via saveConfig().
        c. Broadcasts { type: "config-changed" } to all open tabs so the
-          floating button can re-evaluate on already-open job pages.
+          page-native apply UI can re-evaluate on already-open job pages.
        d. Calls sendResponse({ ok: true }).
 7. The /connect page's promise resolves, status flips to "success", shows
    "Paired. Return to the extension."
@@ -136,17 +136,18 @@ Why this pattern:
 - **Stable identity.** `chrome.runtime.id` is unique per extension install; passed via URL so the web app knows who to message back.
 - **Origin-locked.** Only origins listed in `externally_connectable.matches` can send messages — random sites can't pair themselves to the extension.
 
-### Floating button (content script)
+### Page-native apply UI (content script)
 
 [contents/overlay.ts](../../extension/src/contents/overlay.ts):
 
 - Runs at `document_idle` on `*.lever.co`, `*.greenhouse.io`, `*.ashbyhq.com`.
 - Checks `detectATS(url)` + `isLikelyValidPostingUrl(url)` — must have ≥2 path segments. Hides on root hosts.
-- Reads `loadConfig()`. If not paired, doesn't render.
-- Attaches a host `<div>` to `document.documentElement` with `id="autoapply-floating-host"`.
-- Mounts inside a Shadow DOM (`mode: "open"`) to avoid CSS conflicts with the host page.
+- Reads `loadConfig()`. If paired, renders apply CTAs. If not paired, renders setup CTAs so the user discovers the feature from the job page itself.
+- Finds the native ATS apply target (`a`, `button`, `[role=button]`, or submit input whose text includes "apply") and inserts `#autoapply-inline-host` directly after it.
+- Attaches a compact dock to `document.documentElement` with `id="autoapply-floating-host"` as a fallback/status surface.
+- Mounts both surfaces inside Shadow DOM (`mode: "open"`) to avoid CSS conflicts with the host page.
 - Listens for `chrome.runtime.onMessage` with `{ type: "config-changed" }` and re-mounts (for the case where the user pairs while a job page is already open).
-- Listens for `popstate` to re-mount on Ashby's SPA navigations.
+- Listens for `popstate`, `history.pushState`, `history.replaceState`, and DOM mutations to re-mount on Ashby's SPA navigations and late-hydrating job pages.
 
 On click:
 
@@ -154,7 +155,7 @@ On click:
 chrome.runtime.sendMessage({ type: "apply", jobUrl: location.href })
 ```
 
-Service worker handles the apply (see below). While waiting, button enters a `loading` state with a CSS pulse animation. On success, shows "Opened in new tab ↗" briefly then returns to default. On failure, shows a toast above the button.
+Service worker handles the apply (see below). While waiting, both the inline button and dock enter a loading state. On success, a toast confirms the live run opened in a new tab. On failure, the dock shows the server error.
 
 ### Service worker
 
@@ -205,7 +206,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 3. **Paired**:
    - Connected badge.
    - Résumé summary (name + filename).
-   - **Active-tab apply CTA** — when the active tab is on a supported posting, a big "Apply to this Lever job" button. Clicking sends the apply message + closes the popup. This is the same flow as the floating button, just initiated from the toolbar.
+   - **Active-tab apply CTA** — when the active tab is on a supported posting, a big "Apply to this Lever job" button. Clicking sends the apply message + closes the popup. This is the same flow as the inline/dock buttons, just initiated from the toolbar.
    - When the active tab isn't a supported posting: a muted explainer.
    - "Dashboard" + "Settings" footer buttons.
 
@@ -271,7 +272,7 @@ CORS uses `Access-Control-Allow-Origin: *` — the endpoints don't carry auth co
 - **Plasmo overrides `manifest.action`.** If you need to customize the action object (e.g., for badge text), don't set it in `package.json`; do it at runtime via `chrome.action.setTitle(...)`.
 - **`externally_connectable.matches` is in the extension's manifest**, not the web app's. It limits which origins are allowed to send messages *to* the extension.
 - **Content scripts run in an isolated world.** Page scripts can't see our injected button, and we can't see page-side JS. Communicate only via DOM or `chrome.runtime.sendMessage`.
-- **Shadow DOM is required** for the floating button to survive ATS pages with strict CSS resets. Without it, hostile `* { margin: 0 !important }` rules would mangle the button.
+- **Shadow DOM is required** for the inline button and dock to survive ATS pages with strict CSS resets. Without it, hostile `* { margin: 0 !important }` rules would mangle the UI.
 - **Web app must exclude `extension/` in its tsconfig.** Otherwise `next build` tries to typecheck the extension files and fails on `~lib/*` path aliases.
 - **`chrome.storage.local` is ~10 MB** — borderline for 5 MB PDFs base64-encoded. If a user has a 7 MB PDF, pairing silently fails (the service worker's saveConfig throws, sendResponse returns `{ ok: false }`). v2 could downscale the PDF on the web app side before pairing.
 - **The extension makes the API URL configurable via `PLASMO_PUBLIC_API_BASE`.** Set in `.env.development` (default `localhost:3000`) and `.env.production` (your Railway URL).
@@ -297,15 +298,16 @@ npm run build
 ### Floating button
 
 1. Visit a real Lever posting (e.g., `https://jobs.lever.co/...`).
-2. Bottom-right corner: glass floating button "Apply with AutoApply".
-3. Visit `https://jobs.lever.co/` (root, no posting) → button does NOT appear.
+2. Beside the page's native Apply button: "One-click apply with AutoApply".
+3. Bottom-right corner: compact AutoApply dock with résumé status and the same apply action.
+4. Visit `https://jobs.lever.co/` (root, no posting) → button does NOT appear.
 
 ### One-click apply
 
-1. From a paired browser, on a real Lever job, click the floating button.
-2. Button shows "Spinning up the agent…".
+1. From a paired browser, on a real Lever job, click the inline AutoApply button next to the native Apply button.
+2. Button shows a loading state.
 3. New tab opens to `localhost:3000/?runId=<id>` with LiveRun rendered + agent already filling.
-4. Floating button on the original tab shows "Opened in new tab ↗" briefly, then returns to default.
+4. Dock on the original tab confirms the live run opened, then returns to default.
 5. New tab: status flips through navigating → filling → awaiting_review.
 6. Click Submit for real → confetti.
 
@@ -319,7 +321,7 @@ npm run build
 ### Disconnect
 
 1. Options page → Disconnect button → "Not connected" state returns.
-2. Visit a job page → floating button no longer appears.
+2. Visit a job page → the inline/dock surfaces switch to setup CTAs instead of applying.
 
 ## Failure modes
 
@@ -327,7 +329,7 @@ npm run build
 |---|---|---|
 | Web app down when pairing | "Pairing failed: Chrome runtime not reachable" | Verify `localhost:3000` is running |
 | `externally_connectable` mismatch | `/connect` page renders but Allow does nothing | Check extension manifest origins match the web app's URL |
-| Floating button appears on non-job pages | URL pattern too loose | `isLikelyValidPostingUrl` requires ≥2 path segments — usually catches root pages |
+| Inline button appears on non-job pages | URL pattern too loose | `isLikelyValidPostingUrl` requires ≥2 path segments — usually catches root pages |
 | Submit fails with 400 from /api/start | "Unsupported ATS" or "Gemini not configured" | Same checks as web app — toast in content script surfaces the message |
 | Browser tab explosion | 10 clicks → 10 tabs | Documented limitation; v2 could `chrome.tabs.update` an existing AutoApply tab |
 | CSP on ATS page blocks Shadow DOM | Button doesn't appear | Rare; Shadow DOM is generally CSP-safe. Inspect the page for `style-src 'unsafe-inline'` violations |

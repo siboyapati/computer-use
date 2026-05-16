@@ -107,4 +107,8 @@ export interface StatusMessage {
   type: "get-status";
 }
 
-export type ExtensionMessage = PairMessage | ApplyMessage | StatusMessage;
+export interface OpenOptionsMessage {
+  type: "open-options";
+}
+
+export type ExtensionMessage = PairMessage | ApplyMessage | StatusMessage | OpenOptionsMessage;

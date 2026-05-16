@@ -14,7 +14,7 @@ A "deferred" list at the bottom records what we considered and consciously didn'
 |---|---|---|
 | **Résumé parser** | PDF → strict JSON in one Claude call (PDF input + `tool_use`). | [resume-parser.md](./features/resume-parser.md) |
 | **Agent runner** | Stagehand v3 + Steel.dev cloud browser orchestration; navigates, fills, submits, screenshots. | [agent-runner.md](./features/agent-runner.md) |
-| **Field mapping** | Deterministic dictionary → EEO heuristics → LLM fallback, with prompt-caching. EEO never auto-picks a real demographic answer. | [field-mapping.md](./features/field-mapping.md) |
+| **Field mapping** | Deterministic dictionary → EEO privacy guard → profile extras → semantic saved answers → LLM fallback, with prompt-caching. EEO never auto-picks a real demographic answer. | [field-mapping.md](./features/field-mapping.md) |
 | **ATS adapters** | Per-platform extraction + file-upload + submit, with deterministic CSS selectors before LLM `act()` fallback. | [ats-adapters.md](./features/ats-adapters.md) |
 | **Live browser stream** | Steel `sessionViewerUrl` iframed + SSE event log → user watches the agent in real time. SSE handler removes listeners on disconnect. | [live-stream.md](./features/live-stream.md) |
 | **Try with sample résumé** | A built-in synthetic résumé + PDF ship in `public/sample-resume.pdf`. Landing CTA loads them instantly — no API call, no Anthropic cost. | [persistence.md](./features/persistence.md#sample-r%C3%A9sum%C3%A9) |
@@ -24,7 +24,7 @@ A "deferred" list at the bottom records what we considered and consciously didn'
 | Feature | One-line | Deep dive |
 |---|---|---|
 | **Settings page (BYO keys)** | `/settings` page on web + Keys section in extension options. Per-key Save + Test buttons. Keys stored in `localStorage` / `chrome.storage.local` and shipped per-request. Env vars are fallbacks. | [keys-settings.md](./features/keys-settings.md) |
-| **User profile + auto-learn** | A persistent profile of structured "extras" (work auth, salary, start date) + a learned-answers dictionary keyed by normalized question hash. Field-mapper consults both before falling to the LLM — zero tokens on repeat questions. Auto-populated when the user answers a skipped field in review mode. | [profile-learning.md](./features/profile-learning.md) |
+| **User profile + auto-learn** | A persistent profile of structured "extras" (work auth, salary, start date) + a learned-answers dictionary keyed by normalized question hash and local semantic matching. Field-mapper consults both before falling to the LLM — zero tokens on repeat questions. Auto-populated when the user answers a skipped field in review mode. | [profile-learning.md](./features/profile-learning.md) |
 | **Skipped-required inline edit** | Required fields the agent couldn't answer become editable rows in the review-mode footer. "Save & fill" persists the answer to the profile AND injects a `stagehand.act()` into the running session via `/api/fill/[runId]`. | [profile-learning.md](./features/profile-learning.md) |
 | **Review-before-submit** | Default ON. Agent fills + uploads, then pauses. User clicks "Submit for real". | [review-mode.md](./features/review-mode.md) |
 | **Stop button** | Mid-run abort. `POST /api/stop/[runId]` flips a flag; runner checks between steps. | [review-mode.md](./features/review-mode.md) |
@@ -39,7 +39,7 @@ A "deferred" list at the bottom records what we considered and consciously didn'
 
 | Feature | One-line | Deep dive |
 |---|---|---|
-| **Floating apply button** | Content script injects a glass button on every Lever/GH/Ashby posting. | [chrome-extension.md](./features/chrome-extension.md) |
+| **Page-native apply button** | Content script injects a one-click AutoApply button beside the native ATS Apply button, plus a compact corner dock. | [chrome-extension.md](./features/chrome-extension.md) |
 | **Toolbar popup** | Extension icon shows status + résumé preview + a contextual "Apply to this Lever job" CTA when on a posting. | [chrome-extension.md](./features/chrome-extension.md) |
 | **One-time pairing** | `/connect?ext_id=<id>` page on the web app pushes the résumé into the extension via `externally_connectable`. | [chrome-extension.md](./features/chrome-extension.md) |
 | **Options page** | Polished Tailwind UI: connect / re-pair / disconnect, server URL config, résumé summary. | [chrome-extension.md](./features/chrome-extension.md) |
@@ -97,7 +97,7 @@ Each feature's deep-dive doc has its own "verification" section, but the high-le
 - **Résumé parser**: any standard PDF returns a `Resume` object passing Zod validation.
 - **Agent runner**: real Lever / Greenhouse / Ashby URL → real submitted application + screenshot.
 - **Live stream**: from page load to "Submitted" confetti, the user has a continuous visual narrative.
-- **Chrome extension**: drop résumé on web app → pair extension → open job page → floating button → new tab → live stream.
+- **Chrome extension**: drop résumé on web app → pair extension → open job page → inline AutoApply button → new tab → live stream.
 - **Review-before-submit**: agent fills all fields, pauses, "Submit for real" sends the click.
 - **Stop**: clicking Stop within ~2 seconds halts the run.
 - **Model toggle**: switching Claude → Gemini on the Confirm screen runs the same fill flow with the alternate model.

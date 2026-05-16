@@ -2,7 +2,7 @@
 
 ## One-paragraph summary
 
-A single Next.js process on Railway hosts the web UI, the API routes, and the agent runner. The UI walks the user through three states (Landing → Confirm → LiveRun) and subscribes via Server-Sent Events to an in-memory pub/sub keyed by `runId`. The runner spawns a Stagehand session against a Steel.dev cloud Chromium and drives the form fill, emitting events at every step. The Steel session's `liveUrl` is embedded in the page via `<iframe>` so the user watches the agent live. A Chrome extension (built with Plasmo) is a second client: it injects a floating "Apply with AutoApply" button on supported job pages and hands off to the same `/api/start` endpoint after a one-time résumé-pairing handshake. No database, no Redis, no queue.
+A single Next.js process on Railway hosts the web UI, the API routes, and the agent runner. The UI walks the user through three states (Landing → Confirm → LiveRun) and subscribes via Server-Sent Events to an in-memory pub/sub keyed by `runId`. The runner spawns a Stagehand session against a Steel.dev cloud Chromium and drives the form fill, emitting events at every step. The Steel session's `liveUrl` is embedded in the page via `<iframe>` so the user watches the agent live. A Chrome extension (built with Plasmo) is a second client: it injects an inline "One-click apply with AutoApply" button beside the native ATS Apply button and hands off to the same `/api/start` endpoint after a one-time résumé-pairing handshake. No database, no Redis, no queue.
 
 ---
 
@@ -57,7 +57,7 @@ A single Next.js process on Railway hosts the web UI, the API routes, and the ag
        ┌──────────────────────────────┐
        │ Lever / GH / Ashby job page  │
        │  content script overlay.ts   │
-       │  injects floating button     │
+       │  injects inline apply CTA    │
        └──────────────┬───────────────┘
                       │ click
                       ▼
@@ -108,7 +108,7 @@ Deep dive: [features/persistence.md](./features/persistence.md).
 
 ### 5 · Chrome Extension
 
-A separate Plasmo package in `extension/`. Pairs with the web app once (résumé pushed via `chrome.runtime.sendMessage` from the `/connect` page), then injects a floating button on every Lever/Greenhouse/Ashby posting. The background service worker calls `/api/start` with the stored résumé + the page's URL and opens a new tab pointing at `/?runId=X`.
+A separate Plasmo package in `extension/`. Pairs with the web app once (résumé pushed via `chrome.runtime.sendMessage` from the `/connect` page), then injects an inline AutoApply button and a compact dock on every Lever/Greenhouse/Ashby posting. The background service worker calls `/api/start` with the stored résumé + the page's URL and opens a new tab pointing at `/?runId=X`.
 
 Deep dive: [features/chrome-extension.md](./features/chrome-extension.md).
 
@@ -122,14 +122,14 @@ Deep dive: [features/chrome-extension.md](./features/chrome-extension.md).
 4. Server polls for the Steel `liveUrl` for up to 8 seconds, then returns `{ runId, liveUrl, ats }`.
 5. Client jumps to phase `"live"` and opens `new EventSource('/api/events/<runId>')`.
 6. The SSE handler replays any events already emitted (so the run won't miss what happened during the 8s wait), then pipes new events. Each event is `event: agent` + `data: { ... }`; meta updates come as `event: meta`.
-7. Runner navigates, extracts fields, fills each one (deterministic match → EEO heuristic → LLM fallback), uploads the résumé via `setInputFiles`, and either submits immediately or pauses if `reviewMode` was true.
+7. Runner navigates, extracts fields, fills each one (deterministic match → EEO privacy guard → profile extras/saved answers → LLM fallback), uploads the résumé via `setInputFiles`, and either submits immediately or pauses if `reviewMode` was true.
 8. On review-mode pause: status flips to `awaiting_review`. User clicks **Submit for real** → `POST /api/submit-now/:runId` → flag flips → runner proceeds.
 9. Screenshot captured + emitted as `data:image/png;base64,…` in the meta, run finishes, confetti modal renders.
 
 ## Request flow (Chrome extension)
 
 1. Extension already paired (one-time `/connect` handshake — see [features/chrome-extension.md](./features/chrome-extension.md#pairing)).
-2. User loads a Lever/GH/Ashby posting. Content script `overlay.ts` checks storage, sees pairing, injects floating button.
+2. User loads a Lever/GH/Ashby posting. Content script `overlay.ts` checks storage, sees pairing, injects the inline apply CTA and dock.
 3. User clicks → `chrome.runtime.sendMessage({ type: "apply", jobUrl })` to the service worker.
 4. Service worker `POST ${apiBase}/api/start` with the stored résumé and `reviewMode: true`.
 5. Receives `{ runId, liveUrl, ats }`, opens `chrome.tabs.create({ url: '${apiBase}/?runId=${runId}' })`.

@@ -5,14 +5,14 @@
  *   1. Accept the one-time "pair" message from the AutoApply web app's
  *      /connect page (via externally_connectable) and save the résumé +
  *      apiBase to chrome.storage.local.
- *   2. Accept "apply" messages from the content-script floating button,
+ *   2. Accept "apply" messages from the content-script inline/dock CTAs,
  *      hit /api/start on the configured server, open a new tab pointing at
  *      the live-run UI.
  */
 
 import { loadConfig, saveConfig } from "~lib/storage";
 import { startApplication, liveRunUrl } from "~lib/api";
-import type { ApplyMessage, PairMessage, StatusMessage } from "~lib/types";
+import type { ApplyMessage, OpenOptionsMessage, PairMessage, StatusMessage } from "~lib/types";
 
 // ──────────────────────────────────────────────────────────────────────────
 // External messages from the web app's /connect page
@@ -89,6 +89,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, config });
         return;
       }
+      if (isOpenOptionsMessage(message)) {
+        await chrome.runtime.openOptionsPage();
+        sendResponse({ ok: true });
+        return;
+      }
       sendResponse({ ok: false, error: "Unknown message" });
     } catch (err) {
       sendResponse({
@@ -125,4 +130,8 @@ function isApplyMessage(m: unknown): m is ApplyMessage {
 
 function isStatusMessage(m: unknown): m is StatusMessage {
   return typeof m === "object" && m !== null && (m as { type?: string }).type === "get-status";
+}
+
+function isOpenOptionsMessage(m: unknown): m is OpenOptionsMessage {
+  return typeof m === "object" && m !== null && (m as { type?: string }).type === "open-options";
 }

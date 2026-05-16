@@ -157,7 +157,7 @@ The Settings UI shows the saved key as masked text below the input until the use
 1. Build + reload (`cd extension && npm run build` then reload in `chrome://extensions/`).
 2. Options page now shows a Keys section with three rows.
 3. Test + Save flow identical to web app.
-4. Saved keys ride along on every floating-button apply click via `chrome.storage.local`.
+4. Saved keys ride along on every extension apply click via `chrome.storage.local`.
 
 ### Skipped-required handling
 

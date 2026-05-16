@@ -8,9 +8,9 @@
  *   3. Connect Stagehand v3 via CDP.
  *   4. Dispatch to the per-ATS adapter (Lever / Greenhouse / Ashby) to
  *      extract the form schema.
- *   5. Fill every field via mapField — deterministic → EEO heuristic →
- *      LLM fallback. File uploads use Playwright's setInputFiles directly
- *      (no LLM involvement).
+ *   5. Fill every field via mapField — deterministic → EEO privacy guard →
+ *      profile extras/saved answers → LLM fallback. File uploads use
+ *      Playwright's setInputFiles directly (no LLM involvement).
  *   6. Optionally pause for human review (default ON via reviewMode).
  *   7. Click Submit. Capture screenshot. Clean up.
  *
@@ -256,6 +256,7 @@ export async function runApplication(args: RunArgs): Promise<void> {
             label: field.label,
             skipped: true,
             required: field.required,
+            reasoning: answer.reasoning,
           });
           continue;
         }

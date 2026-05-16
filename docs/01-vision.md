@@ -4,7 +4,7 @@
 
 > **"Apply to fifty jobs in the time it takes to apply to one."**
 
-A job seeker drops their résumé once, then for every interesting posting they either (a) paste the URL into the web app and click Start, or (b) click a floating "Apply with AutoApply" button injected on the job page by the Chrome extension. In both cases, an AI agent opens a cloud browser, reads every form field with vision and the accessibility tree, fills it from the résumé, uploads the PDF, and stops just before submit. The user reviews everything in a live-streamed browser pane, then clicks **Submit for real** to send the application.
+A job seeker drops their résumé once, then for every interesting posting they either (a) paste the URL into the web app and click Start, or (b) click a "One-click apply with AutoApply" button injected beside the job page's own Apply button by the Chrome extension. In both cases, an AI agent opens a cloud browser, reads every form field with vision and the accessibility tree, fills it from the résumé, uploads the PDF, and stops just before submit. The user reviews everything in a live-streamed browser pane, then clicks **Submit for real** to send the application.
 
 End-to-end, one application takes **60–120 seconds** instead of 20–40 minutes.
 
@@ -34,7 +34,7 @@ The web app's flow is: drop résumé → paste URL → click Start. That's alrea
 
 The extension closes that gap:
 
-- A floating button appears on every Lever / Greenhouse / Ashby posting.
+- An inline AutoApply button appears beside the native Apply button on every Lever / Greenhouse / Ashby posting, with a compact corner dock as backup.
 - One click sends the current tab's URL to the same `/api/start` endpoint that the web app uses.
 - A new tab opens with the agent already running.
 

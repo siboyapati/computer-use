@@ -584,7 +584,8 @@ function ProfileSection() {
           </Label>
           <p className="mt-1 text-sm text-muted-foreground">
             Reusable Q&amp;A for repeated application questions. The agent checks
-            these before asking the model to write a new answer.
+            these before asking the model, including close wording variants like
+            &quot;Why this job?&quot; and &quot;What interests you?&quot;.
           </p>
         </div>
 

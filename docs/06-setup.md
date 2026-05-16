@@ -139,7 +139,7 @@ This writes to `extension/build/chrome-mv3-dev/`. Reload from `chrome://extensio
 3. Open the extension's options page (`chrome://extensions/` → AutoApply → **Details** → **Extension options**).
 4. Click **Connect to AutoApply**. A new tab opens to `/connect?ext_id=<id>`.
 5. Click **Allow + Pair**. You should see "✓ Paired" and the options page now shows your résumé summary.
-6. Visit any Lever / Greenhouse / Ashby job posting. A floating glass button appears bottom-right.
+6. Visit any Lever / Greenhouse / Ashby job posting. An AutoApply button appears beside the native Apply button, with a compact dock bottom-right.
 7. Click → a new tab opens at `localhost:3000/?runId=<id>` showing the agent already running.
 
 ---

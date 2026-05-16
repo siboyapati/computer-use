@@ -5,7 +5,7 @@
 A persistent **UserProfile** stored client-side that extends the parsed résumé with two things:
 
 1. **`extras`** — structured ATS-common fields that don't fit the standard résumé schema. Work authorization, salary range, earliest start date, willingness to relocate, notice period, etc. The user fills these once on the Settings page.
-2. **`learnedAnswers`** — a dictionary of question → answer pairs, keyed by a **normalized question hash**. Populated either explicitly on the Settings page or automatically when the user types into a previously-skipped field during review mode.
+2. **`learnedAnswers`** — a dictionary of question → answer pairs, keyed by a **normalized question hash**. Populated either explicitly on the Settings page or automatically when the user types into a previously-skipped field during review mode. At fill time, labels are matched by exact key first, then by a local semantic embedding.
 
 The field-mapper consults both **before** falling back to the LLM call, so a question the user has answered before fills instantly with zero tokens.
 
@@ -30,13 +30,13 @@ Three benefits of getting this right:
 ### Files
 
 **Server-safe types (used by both client and runner):**
-- [src/lib/agent/profile-types.ts](../../src/lib/agent/profile-types.ts) — `UserProfile`, `ProfileExtras`, `LearnedAnswer`, plus the `normalizeQuestion()` / `matchExtra()` / `extraToString()` helpers.
+- [src/lib/agent/profile-types.ts](../../src/lib/agent/profile-types.ts) — `UserProfile`, `ProfileExtras`, `LearnedAnswer`, plus the `normalizeQuestion()` / `semanticQuestionSimilarity()` / `findBestSemanticQuestionMatch()` / `matchExtra()` / `extraToString()` helpers.
 
 **Client storage (browser-only):**
 - [src/lib/profile.ts](../../src/lib/profile.ts) — `loadProfile()`, `saveProfile()`, `patchExtras()`, `recordAnswer()`, `forgetAnswer()`, `previewProfileAnswer()`. Persists to `localStorage` under `autoapply.profile.v1`.
 
 **Field-mapper integration:**
-- [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts) — `profileAnswer()` checks learnedAnswers (exact key match) → extras (heuristic match) → returns answer if found. Called between Tier 1 (résumé) and Tier 2 (EEO) in `mapField()`.
+- [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts) — `profileAnswer()` checks extras → learnedAnswers (exact or semantic match) → returns answer if found. Called after Tier 1 (résumé) and the EEO privacy guard in `mapField()`.
 
 **Inline learn during review:**
 - [src/lib/agent/events.ts](../../src/lib/agent/events.ts) — `requestFill(runId, label, value)` + `drainFillRequests(runId)` for queuing inline fills.
@@ -51,9 +51,9 @@ Three benefits of getting this right:
 
 ```text
 1.   Deterministic dictionary   — name, email, phone, LinkedIn (résumé.personal.*)
-1.5. Profile extras             — work auth, salary, start date (heuristic label match)  ← NEW
-1.6. Learned answers            — exact normalized-question match                         ← NEW
-2.   EEO heuristic              — decline by default
+1.5. EEO heuristic              — decline by default; sensitive demographics never reuse profile answers
+1.6. Profile extras             — work auth, salary, start date (heuristic label match)
+1.7. Saved answers              — exact normalized key, then local semantic embedding
 3.   LLM fallback               — Claude generates from résumé
 ```
 
@@ -80,6 +80,33 @@ This makes the following all hash to the same key, hitting the same saved answer
 - `"WHY ARE YOU INTERESTED IN THIS ROLE *"`
 - `"why are you interested in this role (required)"`
 
+### Semantic matching
+
+Exact normalization still misses short variants like:
+
+- saved: `"Why are you interested in this role?"`
+- incoming: `"Why this job?"`
+- incoming: `"What interests you?"`
+
+To catch these without adding another paid provider call, `profile-types.ts`
+builds a small local semantic embedding for each question label:
+
+- normalized tokens and bigrams
+- canonical aliases (`job` / `position` / `opportunity` → `role`)
+- intent concepts (`intent_interest_motivation`, `intent_sponsorship`, `intent_compensation`, etc.)
+- low-weight character n-grams for spelling variants
+
+`findBestSemanticQuestionMatch()` cosine-scores the incoming label against saved
+answer keys and accepts matches above `SEMANTIC_QUESTION_MATCH_THRESHOLD`.
+This is deterministic, offline, and cheap enough to run for every field.
+
+Verification lives in [scripts/test-semantic-matching.ts](../../scripts/test-semantic-matching.ts)
+and is runnable with:
+
+```bash
+npm run test:semantic
+```
+
 ### Heuristic `matchExtra`
 
 For structured fields, regex matches the incoming label to a key on `ProfileExtras`:
@@ -98,8 +125,8 @@ When `salaryMin` matches but the user has also filled `salaryMax`, the formatter
 
 ```text
 1. Agent extracts form, sees "Why are you interested in this role?" (required).
-2. mapField runs Tier 1 (résumé silent), Tier 1.5 (no match), Tier 1.6
-   (no saved answer), Tier 2 (not EEO), Tier 3 (LLM returns "").
+2. mapField runs Tier 1 (résumé silent), Tier 1.5 (not EEO), Tier 1.6
+   (extras miss), Tier 1.7 (saved answers miss), Tier 3 (LLM returns "").
 3. value is empty + field.required = true → pushed into skippedRequired[].
 4. Agent finishes everything else, hits awaiting_review.
 5. UI footer shows the editable row with the label + input.
@@ -120,16 +147,14 @@ When `salaryMin` matches but the user has also filled `salaryMax`, the formatter
 ### Data flow — same question on a future application
 
 ```text
-1. Agent extracts form, sees "Why do you want to work here?" — DIFFERENT label.
-   Misses the learnedAnswers key (different normalization).
-   Tier 3 LLM fires.
-   
-   OR if the label is identical/similar enough to hash the same:
-2. Tier 1 (résumé silent), Tier 1.5 (no match), Tier 1.6 HITS:
-   key = "why are you interested in this role"
-   → learnedAnswers[key].answer
-   → returns instantly with reasoning "saved answer (used 3x before)"
-3. Field fills, timesUsed counter increments next save, no LLM call.
+1. Agent extracts form, sees "What interests you about this opportunity?"
+2. Tier 1 (résumé silent), Tier 1.5 (not EEO), Tier 1.6 (extras miss),
+   Tier 1.7 checks learnedAnswers:
+   - exact key misses
+   - semantic embedding matches `"why are you interested in this role"`
+3. `learnedAnswers[key].answer` returns instantly with reasoning
+   `"semantic saved answer (NN% match)"`.
+4. Field fills; no LLM call.
 ```
 
 The Settings page's Learned Answers list shows the entry with "Used 3× · last 5m ago".
@@ -151,7 +176,7 @@ When `status === "awaiting_review"`:
 
 ## Gotchas
 
-- **Variants don't auto-merge.** "Why are you interested?" and "Why do you want this job?" hash to different keys. The user re-saves once for the new wording; it's then permanent. Semantic matching via embeddings is a future feature.
+- **Semantic matching is local, not model-hosted.** It is a deterministic sparse embedding tuned for ATS question labels. It catches common variants without API cost, but it is not a general-purpose embedding model.
 - **Field-mapper sees the profile as static.** If a run is mid-flight and you update the profile from the Settings page, the running agent doesn't pick it up. New profile state takes effect on the next `/api/start` call.
 - **Salary heuristic is rough.** `matchExtra` returns `salaryMin` for any salary-shaped label; the formatter joins min+max if both are set, else returns just min. ATSes that ask for max separately won't get both filled — we only have one slot in the form. Acceptable in practice; users can override with `recordAnswer` for specific labels.
 - **`recordAnswer` increments `timesUsed`; `saveAnswer` doesn't.** The "Save & fill" button uses `recordAnswer` (it represents an actual use). The Settings page's pre-population helper uses `saveAnswer` to avoid inflating the counter.
@@ -190,7 +215,7 @@ When `status === "awaiting_review"`:
 | Failure | What you see | Mitigation |
 |---|---|---|
 | localStorage write blocked (private mode) | Settings save silently no-ops; nothing persists | User retypes per session |
-| Same question with different wording | LLM fires instead of using saved answer | Re-save once with new wording |
+| Saved answer variant below the semantic threshold | LLM fires instead of using saved answer | Add that wording as a custom saved answer or tune the semantic patterns |
 | Profile too large for localStorage | Save silently fails | Forget old entries via Settings |
 | `/api/fill` 404 (run already ended) | Inline error on the row, but localStorage still saved | Future runs use the saved answer |
 | Stagehand.act fails on the fill | Error event in log, but localStorage still saved | User manually types in the iframe |
@@ -205,7 +230,7 @@ When `status === "awaiting_review"`:
 
 ## What's deliberately not in scope (yet)
 
-- **Semantic matching** of question variants via embeddings — would catch "Why this job?" / "What interests you about this role?" / "Why are you applying?" as the same question. Worth doing when we have >50 saved answers and users start hitting variant misses.
+- **Hosted embeddings** through a provider API. The current matcher is local and deterministic. A hosted embedding model may be worth it later if the local scorer starts missing many real-world variants.
 - **Server-side profile storage** — required for cross-device sync. Part of the SaaS migration plan (Supabase Postgres).
 - **Profile import/export** — handy for backup or moving between browsers. ~30 lines of JSON download/upload UI. Defer until requested.
 - **Inferred extras** — could pull salary range from past offer letters, work auth from résumé country flags, etc. Out of scope; LLM extraction risk.

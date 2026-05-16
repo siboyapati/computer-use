@@ -2,7 +2,7 @@
  * Shared profile types — server-safe (no browser APIs touched here so
  * runner.ts / field-mapper.ts / API routes can import).
  *
- * Two-part data model that extends the parsed Resume:
+ * Three-part data model that extends the parsed Resume:
  *
  *  1. `extras` — structured fields that ATSes commonly ask but aren't in
  *     the standard résumé schema. Work authorization, salary, start
@@ -12,6 +12,10 @@
  *     question hash. Populated either pre-emptively from the Settings
  *     page, or automatically when the user answers a skipped field in
  *     review mode and clicks "Save for next time".
+ *
+ *  3. `companyAnswers` — company-scoped Q→A overrides. These let the user
+ *     keep a general "Why this role?" answer while using a more specific
+ *     answer for OpenAI, Anthropic, etc.
  *
  *  The field-mapper consults both before falling back to the LLM call,
  *  giving zero-cost answers to repeat questions. Question variants are
@@ -52,16 +56,25 @@ export interface LearnedAnswer {
   lastUsedAt: number;
 }
 
+export interface CompanyAnswerGroup {
+  label?: string;
+  answers: Record<string, LearnedAnswer>;
+  updatedAt: number;
+}
+
 export interface UserProfile {
   extras: ProfileExtras;
   /** Keyed by `normalizeQuestion(label)`. */
   learnedAnswers: Record<string, LearnedAnswer>;
+  /** Keyed by `normalizeCompanyKey(companyOrUrl)`, then normalized question. */
+  companyAnswers?: Record<string, CompanyAnswerGroup>;
   updatedAt: number;
 }
 
 export const EMPTY_PROFILE: UserProfile = {
   extras: {},
   learnedAnswers: {},
+  companyAnswers: {},
   updatedAt: 0,
 };
 
@@ -79,6 +92,98 @@ export function normalizeQuestion(label: string): string {
     .replace(/[?:.!,;"'`]/g, "")     // punctuation
     .replace(/\s+/g, " ")            // collapse whitespace
     .trim();
+}
+
+export interface CompanyScope {
+  key: string;
+  label: string;
+}
+
+const GENERIC_COMPANY_SEGMENTS = new Set([
+  "apply",
+  "boards",
+  "careers",
+  "embed",
+  "gh",
+  "job",
+  "jobs",
+  "opening",
+  "openings",
+]);
+
+const GENERIC_COMPANY_SUBDOMAINS = new Set([
+  "app",
+  "boards",
+  "job-boards",
+  "jobs",
+  "www",
+]);
+
+export function companyScopeFromJobUrl(jobUrl: string): CompanyScope | null {
+  try {
+    const url = new URL(jobUrl.trim());
+    const host = url.hostname.toLowerCase();
+    const segments = url.pathname
+      .split("/")
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+
+    let candidate = "";
+    if (host.endsWith(".lever.co") || host === "lever.co") {
+      candidate = segments[0] ?? "";
+    } else if (host.endsWith(".greenhouse.io") || host === "greenhouse.io") {
+      candidate = segments[0] ?? "";
+    } else if (host.endsWith(".ashbyhq.com") || host === "ashbyhq.com") {
+      candidate = segments[0] ?? "";
+    }
+
+    if (GENERIC_COMPANY_SEGMENTS.has(candidate.toLowerCase())) {
+      candidate = segments.find((segment) => !GENERIC_COMPANY_SEGMENTS.has(segment.toLowerCase())) ?? "";
+    }
+
+    if (!candidate) {
+      const subdomain = host.split(".")[0] ?? "";
+      if (!GENERIC_COMPANY_SUBDOMAINS.has(subdomain)) candidate = subdomain;
+    }
+
+    const key = normalizeCompanyKey(candidate);
+    return key ? { key, label: companyLabelFromKey(key) } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function companyScopeFromInput(input: string): CompanyScope | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return companyScopeFromJobUrl(trimmed);
+  const key = normalizeCompanyKey(trimmed);
+  return key ? { key, label: companyLabelFromKey(key) } : null;
+}
+
+export function normalizeCompanyKey(company: string): string {
+  return safeDecodeURIComponent(company)
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function companyLabelFromKey(key: string): string {
+  return key
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export interface SemanticQuestionMatch {

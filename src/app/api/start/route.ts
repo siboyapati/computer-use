@@ -42,6 +42,25 @@ const ProfileSchema = z
         }),
       )
       .optional(),
+    companyAnswers: z
+      .record(
+        z.string(),
+        z.object({
+          label: z.string().optional(),
+          answers: z.record(
+            z.string(),
+            z.object({
+              answer: z.string(),
+              fieldType: z.string().optional(),
+              lastLabel: z.string().optional(),
+              timesUsed: z.number().optional(),
+              lastUsedAt: z.number().optional(),
+            }),
+          ),
+          updatedAt: z.number().optional(),
+        }),
+      )
+      .optional(),
     updatedAt: z.number().optional(),
   })
   .optional();

@@ -1,12 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowLeft, Loader2, AlertCircle, Send, ShieldCheck, Zap } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  Send,
+  ShieldCheck,
+  Zap,
+  CheckCircle2,
+  CircleAlert,
+  CircleDashed,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ResumeCard } from "./resume-card";
+import { loadKeys, type StoredKeys } from "@/lib/keys";
+import { companyScopeFromJobUrl } from "@/lib/agent/profile-types";
+import { loadProfile, type UserProfile } from "@/lib/profile";
 import {
   detectATS,
   isLikelyValidPostingUrl,
@@ -45,6 +59,20 @@ export function Confirm({
   const [reviewMode, setReviewMode] = useState(initialReviewMode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [storedKeys, setStoredKeys] = useState<StoredKeys>({});
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStoredKeys(loadKeys());
+      setProfile(loadProfile());
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const ats: ATS | null = detectATS(jobUrl);
   const urlOk = Boolean(ats) && isLikelyValidPostingUrl(jobUrl);
@@ -83,6 +111,17 @@ export function Confirm({
               application — make sure this is a job you actually want.
             </p>
           </div>
+
+          <PreApplyChecklist
+            resume={resume}
+            jobUrl={jobUrl}
+            ats={ats}
+            urlOk={urlOk}
+            provider={provider}
+            reviewMode={reviewMode}
+            keys={storedKeys}
+            profile={profile}
+          />
 
           <div className="glass rounded-2xl p-5">
             <Label htmlFor="jobUrl" className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
@@ -180,6 +219,156 @@ export function Confirm({
       </div>
     </motion.div>
   );
+}
+
+type ChecklistTone = "ready" | "warn" | "idle";
+
+function PreApplyChecklist({
+  resume,
+  jobUrl,
+  ats,
+  urlOk,
+  provider,
+  reviewMode,
+  keys,
+  profile,
+}: {
+  resume: Resume;
+  jobUrl: string;
+  ats: ATS | null;
+  urlOk: boolean;
+  provider: LLMProvider;
+  reviewMode: boolean;
+  keys: StoredKeys;
+  profile: UserProfile | null;
+}) {
+  const companyScope = companyScopeFromJobUrl(jobUrl);
+  const learnedCount = Object.values(profile?.learnedAnswers ?? {}).filter((entry) =>
+    Boolean(entry?.answer),
+  ).length;
+  const companyCount = companyScope
+    ? Object.values(profile?.companyAnswers?.[companyScope.key]?.answers ?? {}).filter((entry) =>
+        Boolean(entry?.answer),
+      ).length
+    : 0;
+  const extrasCount = Object.values(profile?.extras ?? {}).filter(
+    (value) => value !== undefined && value !== null && value !== "",
+  ).length;
+  const answerCount = learnedCount + companyCount + extrasCount;
+
+  const needsGoogle = provider === "google";
+  const localKeysReady = Boolean(keys.anthropic && keys.steel && (!needsGoogle || keys.google));
+  const keyMissing = [
+    !keys.anthropic ? "Anthropic" : null,
+    !keys.steel ? "Steel" : null,
+    needsGoogle && !keys.google ? "Gemini" : null,
+  ].filter(Boolean);
+
+  const postingTone: ChecklistTone = !jobUrl ? "idle" : urlOk ? "ready" : "warn";
+  const postingDetail = !jobUrl
+    ? "Paste a supported job URL."
+    : urlOk
+      ? `${atsLabel(ats)} posting ready${companyScope ? ` for ${companyScope.label}` : ""}.`
+      : ats
+        ? "This looks like an ATS root page, not a specific posting."
+        : "Unsupported ATS. Use Lever, Greenhouse, or Ashby.";
+
+  const items = [
+    {
+      label: "Resume ready",
+      detail: resume.personal.fullName || "Parsed resume is loaded.",
+      tone: "ready" as ChecklistTone,
+    },
+    {
+      label: "Posting supported",
+      detail: postingDetail,
+      tone: postingTone,
+    },
+    {
+      label: "API keys",
+      detail: localKeysReady
+        ? "Local keys saved for this run."
+        : keyMissing.length > 0
+          ? `No local ${keyMissing.join(" / ")} key${keyMissing.length === 1 ? "" : "s"}; server env fallback required.`
+          : "Server env fallback may be used.",
+      tone: localKeysReady ? ("ready" as ChecklistTone) : ("warn" as ChecklistTone),
+    },
+    {
+      label: "Saved answers",
+      detail:
+        answerCount > 0
+          ? `${answerCount} reusable answer source${answerCount === 1 ? "" : "s"} ready${
+              companyCount > 0 ? `, including ${companyCount} for ${companyScope?.label}` : ""
+            }.`
+          : "No saved answers yet; custom questions may use the model.",
+      tone: answerCount > 0 ? ("ready" as ChecklistTone) : ("idle" as ChecklistTone),
+    },
+    {
+      label: "Review mode",
+      detail: reviewMode
+        ? "Agent pauses before final submit."
+        : "Auto-submit is on for this run.",
+      tone: reviewMode ? ("ready" as ChecklistTone) : ("warn" as ChecklistTone),
+    },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-border bg-card/70 p-4 shadow-card">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
+            Pre-apply checklist
+          </div>
+          <div className="mt-1 text-sm text-foreground/80">
+            Quick sanity check before the agent starts.
+          </div>
+        </div>
+        <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-primary">
+          {items.filter((item) => item.tone === "ready").length}/{items.length} ready
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <ChecklistItem key={item.label} {...item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChecklistItem({
+  label,
+  detail,
+  tone,
+}: {
+  label: string;
+  detail: string;
+  tone: ChecklistTone;
+}) {
+  const Icon = tone === "ready" ? CheckCircle2 : tone === "warn" ? CircleAlert : CircleDashed;
+  return (
+    <div className="flex min-h-[68px] items-start gap-2 rounded-xl border border-border bg-background/45 p-3">
+      <Icon
+        className={cn(
+          "mt-0.5 size-4 shrink-0",
+          tone === "ready"
+            ? "text-primary"
+            : tone === "warn"
+              ? "text-amber-500"
+              : "text-muted-foreground",
+        )}
+      />
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function atsLabel(ats: ATS | null): string {
+  if (!ats) return "Supported";
+  return ats[0].toUpperCase() + ats.slice(1);
 }
 
 function ATSBadge({ ats, url }: { ats: ATS | null; url: string }) {

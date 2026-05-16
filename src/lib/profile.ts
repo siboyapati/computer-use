@@ -13,11 +13,13 @@
  */
 
 import {
-  EMPTY_PROFILE,
+  companyScopeFromInput,
   extraToString,
   findBestSemanticQuestionMatch,
   matchExtra,
   normalizeQuestion,
+  type CompanyAnswerGroup,
+  type CompanyScope,
   type LearnedAnswer,
   type ProfileExtras,
   type UserProfile,
@@ -29,21 +31,26 @@ function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
+function emptyProfile(): UserProfile {
+  return { extras: {}, learnedAnswers: {}, companyAnswers: {}, updatedAt: 0 };
+}
+
 export function loadProfile(): UserProfile {
-  if (!isBrowser()) return { ...EMPTY_PROFILE };
+  if (!isBrowser()) return emptyProfile();
   try {
     const raw = window.localStorage.getItem(KEY);
-    if (!raw) return { ...EMPTY_PROFILE };
+    if (!raw) return emptyProfile();
     const parsed = JSON.parse(raw) as UserProfile;
     // Defensive: missing properties fall back to defaults so older
     // schemas don't crash the UI.
     return {
       extras: parsed.extras ?? {},
       learnedAnswers: parsed.learnedAnswers ?? {},
+      companyAnswers: parsed.companyAnswers ?? {},
       updatedAt: parsed.updatedAt ?? 0,
     };
   } catch {
-    return { ...EMPTY_PROFILE };
+    return emptyProfile();
   }
 }
 
@@ -164,6 +171,77 @@ export function forgetAnswer(labelOrKey: string): UserProfile {
 }
 
 /**
+ * Save or update an answer scoped to a specific company. `companyOrUrl` can
+ * be a company name/slug ("openai") or a supported ATS posting URL.
+ */
+export function saveCompanyAnswer(
+  companyOrUrl: string,
+  question: string,
+  answer: string,
+  fieldType = "textarea",
+): UserProfile {
+  const scope = companyScopeFromInput(companyOrUrl);
+  const key = normalizeQuestion(question);
+  const current = loadProfile();
+  if (!scope || !key) return current;
+
+  const companyAnswers = { ...(current.companyAnswers ?? {}) };
+  const priorGroup = companyAnswers[scope.key];
+  const group: CompanyAnswerGroup = {
+    label: priorGroup?.label ?? scope.label,
+    answers: { ...(priorGroup?.answers ?? {}) },
+    updatedAt: Date.now(),
+  };
+
+  const trimmed = answer.trim();
+  if (!trimmed) {
+    delete group.answers[key];
+  } else {
+    const prior = group.answers[key];
+    group.answers[key] = {
+      answer: trimmed,
+      fieldType: prior?.fieldType ?? fieldType,
+      lastLabel: question.trim(),
+      timesUsed: prior?.timesUsed ?? 0,
+      lastUsedAt: prior?.lastUsedAt ?? 0,
+    };
+  }
+
+  if (Object.keys(group.answers).length === 0) {
+    delete companyAnswers[scope.key];
+  } else {
+    companyAnswers[scope.key] = group;
+  }
+
+  const next: UserProfile = { ...current, companyAnswers };
+  saveProfile(next);
+  return next;
+}
+
+export function forgetCompanyAnswer(companyOrKey: string, labelOrKey: string): UserProfile {
+  const scope = companyScopeFromInput(companyOrKey) ?? companyScopeFromKey(companyOrKey);
+  const key = normalizeQuestion(labelOrKey) || labelOrKey;
+  const current = loadProfile();
+  if (!scope || !key) return current;
+
+  const companyAnswers = { ...(current.companyAnswers ?? {}) };
+  const group = companyAnswers[scope.key];
+  if (!group?.answers?.[key]) return current;
+
+  const answers = { ...group.answers };
+  delete answers[key];
+  if (Object.keys(answers).length === 0) {
+    delete companyAnswers[scope.key];
+  } else {
+    companyAnswers[scope.key] = { ...group, answers, updatedAt: Date.now() };
+  }
+
+  const next: UserProfile = { ...current, companyAnswers };
+  saveProfile(next);
+  return next;
+}
+
+/**
  * Lookup helper used by the UI to preview what the agent WOULD fill into a
  * given label, based on extras + learnedAnswers. Returns undefined if
  * nothing in the profile matches.
@@ -171,7 +249,8 @@ export function forgetAnswer(labelOrKey: string): UserProfile {
 export function previewProfileAnswer(
   label: string,
   profile?: UserProfile,
-): { value: string; source: "extras" | "learned" } | undefined {
+  companyOrUrl?: string,
+): { value: string; source: "extras" | "company" | "learned" } | undefined {
   const p = profile ?? loadProfile();
   const extras = p.extras ?? {};
   const extrasKey = matchExtra(label);
@@ -193,20 +272,40 @@ export function previewProfileAnswer(
   }
 
   const key = normalizeQuestion(label);
+  const companyScope = companyOrUrl ? companyScopeFromInput(companyOrUrl) : null;
+  const companyGroup = companyScope ? p.companyAnswers?.[companyScope.key] : undefined;
+  const companyLearned = companyGroup ? findSavedAnswer(label, companyGroup.answers) : undefined;
+  if (companyLearned) return { value: companyLearned.answer, source: "company" };
+
   const learnedAnswers = p.learnedAnswers ?? {};
-  const learned = learnedAnswers[key];
+  const learned = key ? learnedAnswers[key] : undefined;
   if (learned) return { value: learned.answer, source: "learned" };
 
-  const semanticMatch = findBestSemanticQuestionMatch(
-    label,
-    Object.keys(learnedAnswers).filter((candidate) => Boolean(learnedAnswers[candidate]?.answer)),
-  );
-  if (semanticMatch) {
-    const match = learnedAnswers[semanticMatch.key];
-    if (match?.answer) return { value: match.answer, source: "learned" };
-  }
+  const semanticLearned = findSavedAnswer(label, learnedAnswers);
+  if (semanticLearned) return { value: semanticLearned.answer, source: "learned" };
 
   return undefined;
 }
 
-export type { UserProfile, ProfileExtras, LearnedAnswer };
+function findSavedAnswer(
+  label: string,
+  answers: Record<string, LearnedAnswer>,
+): LearnedAnswer | undefined {
+  const key = normalizeQuestion(label);
+  const exact = key ? answers[key] : undefined;
+  if (exact?.answer) return exact;
+
+  const semanticMatch = findBestSemanticQuestionMatch(
+    label,
+    Object.keys(answers).filter((candidate) => Boolean(answers[candidate]?.answer)),
+  );
+  if (!semanticMatch) return undefined;
+  return answers[semanticMatch.key];
+}
+
+function companyScopeFromKey(key: string): CompanyScope | null {
+  const scope = companyScopeFromInput(key);
+  return scope?.key ? scope : null;
+}
+
+export type { UserProfile, ProfileExtras, LearnedAnswer, CompanyAnswerGroup };

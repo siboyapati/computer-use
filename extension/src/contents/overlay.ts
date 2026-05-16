@@ -191,7 +191,10 @@ function updateInline(host: HTMLElement, { ats, cfg }: { ats: ATS; cfg: StoredCo
   button.innerHTML = cfg.paired
     ? `
       <span class="aa-inline-spark">✦</span>
-      <span>One-click apply with AutoApply</span>
+      <span class="aa-inline-text">
+        <strong>One-click apply with AutoApply</strong>
+        <small>${inlineStatus(cfg)}</small>
+      </span>
       <span class="aa-inline-ats">${labelForATS(ats)}</span>
     `
     : `
@@ -269,6 +272,7 @@ function getShadowRoots(): ShadowRoot[] {
 function pairedDockMarkup(cfg: Extract<StoredConfig, { paired: true }>, ats: ATS): string {
   const name = escapeHtml(cfg.resume.personal.fullName || "Resume ready");
   const headline = escapeHtml(cfg.resume.headline || cfg.fileName || "Review before submit is on");
+  const answerCount = countSavedAnswerSources(cfg.profile);
   return `
     <button class="aa-close" type="button" aria-label="Hide AutoApply">×</button>
     <div class="aa-kicker"><span class="aa-dot"></span>${labelForATS(ats)} job detected</div>
@@ -285,6 +289,11 @@ function pairedDockMarkup(cfg: Extract<StoredConfig, { paired: true }>, ats: ATS
       <span class="aa-primary-label">One-click apply</span>
       <span class="aa-arrow">→</span>
     </button>
+    <div class="aa-status-row">
+      <span>Resume ready</span>
+      <span>${answerCount} saved ${answerCount === 1 ? "answer" : "answers"}</span>
+      <span>Review on</span>
+    </div>
     <div class="aa-footnote">Opens a live run and pauses before final submit.</div>
     <div class="aa-toast" role="status"></div>
   `;
@@ -353,6 +362,25 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function inlineStatus(cfg: Extract<StoredConfig, { paired: true }>): string {
+  const answerCount = countSavedAnswerSources(cfg.profile);
+  return `Resume ready · ${answerCount} saved ${answerCount === 1 ? "answer" : "answers"} · Review on`;
+}
+
+function countSavedAnswerSources(profile: Extract<StoredConfig, { paired: true }>["profile"]): number {
+  if (!profile) return 0;
+  const learned = Object.values(profile.learnedAnswers ?? {}).filter((entry) =>
+    Boolean(entry?.answer),
+  ).length;
+  const company = Object.values(profile.companyAnswers ?? {}).reduce((sum, group) => {
+    return (
+      sum +
+      Object.values(group?.answers ?? {}).filter((entry) => Boolean(entry?.answer)).length
+    );
+  }, 0);
+  return learned + company;
 }
 
 const STYLES = `
@@ -530,6 +558,25 @@ const STYLES = `
     line-height: 1.35;
     text-align: center;
   }
+  .aa-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 10px;
+  }
+  .aa-status-row span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.055);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    color: rgba(248, 244, 236, 0.7);
+    font-size: 10px;
+    font-weight: 650;
+  }
   .aa-toast {
     position: absolute;
     left: 14px;
@@ -577,6 +624,31 @@ const STYLES = `
     line-height: 1;
     white-space: nowrap;
     transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  }
+  .aa-inline-text {
+    display: inline-flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  .aa-inline-text strong,
+  .aa-inline-text small {
+    display: block;
+    max-width: 270px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .aa-inline-text strong {
+    color: inherit;
+    font-size: 14px;
+    font-weight: 760;
+  }
+  .aa-inline-text small {
+    color: rgba(248, 244, 236, 0.64);
+    font-size: 10px;
+    font-weight: 650;
   }
   .aa-inline:hover {
     transform: translateY(-1px);

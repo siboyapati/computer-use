@@ -26,7 +26,7 @@ import {
   maskKey,
   type StoredKeys,
 } from "@/lib/keys";
-import { normalizeQuestion } from "@/lib/agent/profile-types";
+import { companyScopeFromInput, normalizeQuestion } from "@/lib/agent/profile-types";
 
 type Provider = "anthropic" | "google" | "steel";
 
@@ -495,6 +495,9 @@ function ProfileSection() {
   >(null);
   const [customQuestion, setCustomQuestion] = useState("");
   const [customAnswer, setCustomAnswer] = useState("");
+  const [companyInput, setCompanyInput] = useState("");
+  const [companyQuestion, setCompanyQuestion] = useState("Why are you interested in this role?");
+  const [companyAnswer, setCompanyAnswer] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -529,11 +532,34 @@ function ProfileSection() {
     toast.success(answer.trim() ? "Saved answer" : "Cleared answer");
   }
 
+  async function handleSaveCompanyAnswer(companyOrUrl: string, question: string, answer: string) {
+    const { saveCompanyAnswer } = await import("@/lib/profile");
+    const next = saveCompanyAnswer(companyOrUrl, question, answer);
+    setProfile(next);
+    toast.success(answer.trim() ? "Saved company answer" : "Cleared company answer");
+  }
+
+  async function handleForgetCompanyAnswer(companyKey: string, questionKey: string) {
+    const { forgetCompanyAnswer } = await import("@/lib/profile");
+    const next = forgetCompanyAnswer(companyKey, questionKey);
+    setProfile(next);
+    toast.message("Company answer forgotten");
+  }
+
   async function handleAddCustom() {
     if (!customQuestion.trim() || !customAnswer.trim()) return;
     await handleSaveAnswer(customQuestion, customAnswer);
     setCustomQuestion("");
     setCustomAnswer("");
+  }
+
+  async function handleAddCompanyAnswer() {
+    if (!companyScopeFromInput(companyInput) || !companyQuestion.trim() || !companyAnswer.trim()) {
+      return;
+    }
+    await handleSaveCompanyAnswer(companyInput, companyQuestion, companyAnswer);
+    setCompanyQuestion("Why are you interested in this role?");
+    setCompanyAnswer("");
   }
 
   if (profile === null) {
@@ -544,6 +570,10 @@ function ProfileSection() {
   const learnedEntries = Object.entries(profile.learnedAnswers)
     .filter(([key]) => !commonKeys.has(key))
     .sort((a, b) => (b[1].lastUsedAt ?? 0) - (a[1].lastUsedAt ?? 0));
+  const companyGroups = Object.entries(profile.companyAnswers ?? {}).sort((a, b) =>
+    (a[1].label ?? a[0]).localeCompare(b[1].label ?? b[0]),
+  );
+  const companyScope = companyScopeFromInput(companyInput);
 
   return (
     <>
@@ -632,6 +662,83 @@ function ProfileSection() {
             </Button>
           </div>
         </div>
+
+        <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[0.04] p-3">
+          <Label className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+            Company-specific override
+          </Label>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+            Use this when a repeated question needs a company-tailored answer. Paste a job URL
+            or type a company name.
+          </p>
+          <Input
+            value={companyInput}
+            onChange={(e) => setCompanyInput(e.target.value)}
+            placeholder="https://jobs.lever.co/openai/... or OpenAI"
+            className="mt-2 h-9 text-sm"
+          />
+          {companyInput.trim() && (
+            <div className="mt-1 text-[11px] text-muted-foreground/70">
+              {companyScope
+                ? `Will save under ${companyScope.label}`
+                : "Enter a company name or supported job URL"}
+            </div>
+          )}
+          <Input
+            value={companyQuestion}
+            onChange={(e) => setCompanyQuestion(e.target.value)}
+            placeholder="Question label to match"
+            className="mt-2 h-9 text-sm"
+          />
+          <textarea
+            value={companyAnswer}
+            onChange={(e) => setCompanyAnswer(e.target.value)}
+            placeholder="Company-tailored answer to reuse"
+            className="mt-2 min-h-20 w-full resize-y rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary/50"
+          />
+          <div className="mt-2 flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void handleAddCompanyAnswer()}
+              disabled={!companyScope || !companyQuestion.trim() || !companyAnswer.trim()}
+            >
+              Save company answer
+            </Button>
+          </div>
+        </div>
+
+        {companyGroups.length > 0 && (
+          <div className="mt-5">
+            <Label className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+              Company overrides
+            </Label>
+            <div className="mt-2 flex flex-col gap-4">
+              {companyGroups.map(([companyKey, group]) => (
+                <div key={companyKey} className="rounded-xl border border-border bg-muted/20 p-3">
+                  <div className="mb-2 text-sm font-medium text-foreground">
+                    {companyDisplayName(companyKey, group.label)}
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {Object.entries(group.answers).map(([answerKey, entry]) => (
+                      <AnswerEditor
+                        key={`${companyKey}:${answerKey}`}
+                        question={entry.lastLabel ?? answerKey}
+                        value={entry.answer}
+                        placeholder="Company-specific reusable answer"
+                        meta={`Overrides general answer for ${companyDisplayName(companyKey, group.label)}`}
+                        onSave={(answer) =>
+                          void handleSaveCompanyAnswer(companyKey, entry.lastLabel ?? answerKey, answer)
+                        }
+                        onForget={() => void handleForgetCompanyAnswer(companyKey, answerKey)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {learnedEntries.length > 0 && (
           <div className="mt-5">
@@ -808,4 +915,8 @@ function timeAgo(ts: number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function companyDisplayName(companyKey: string, label?: string): string {
+  return label || companyScopeFromInput(companyKey)?.label || companyKey;
 }

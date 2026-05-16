@@ -63,6 +63,23 @@ export interface UserProfile {
       lastUsedAt?: number;
     }
   >;
+  companyAnswers?: Record<
+    string,
+    {
+      label?: string;
+      answers?: Record<
+        string,
+        {
+          answer: string;
+          fieldType?: string;
+          lastLabel?: string;
+          timesUsed?: number;
+          lastUsedAt?: number;
+        }
+      >;
+      updatedAt?: number;
+    }
+  >;
   updatedAt?: number;
 }
 

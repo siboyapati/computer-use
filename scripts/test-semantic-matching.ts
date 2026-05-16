@@ -3,6 +3,7 @@ import { mapField } from "../src/lib/agent/field-mapper";
 import { previewProfileAnswer } from "../src/lib/profile";
 import {
   SEMANTIC_QUESTION_MATCH_THRESHOLD,
+  companyScopeFromJobUrl,
   findBestSemanticQuestionMatch,
   normalizeQuestion,
   semanticQuestionSimilarity,
@@ -144,6 +145,48 @@ async function main() {
   );
   assert.equal(sponsorshipFill.value, "No");
   assert.match(sponsorshipFill.reasoning, /matched option "No"/);
+
+  const companyScope = companyScopeFromJobUrl("https://jobs.lever.co/example/123");
+  assert.equal(companyScope?.key, "example");
+
+  const companyProfile: UserProfile = {
+    ...profile,
+    companyAnswers: {
+      example: {
+        label: "Example",
+        updatedAt: Date.now(),
+        answers: {
+          [savedInterestKey]: {
+            answer: "Example-specific answer with concrete product motivation.",
+            fieldType: "textarea",
+            lastLabel: "Why are you interested in this role?",
+            timesUsed: 0,
+            lastUsedAt: 0,
+          },
+        },
+      },
+    },
+  };
+  const companyFill = await mapField(
+    {
+      label: "What interests you about this opportunity?",
+      type: "textarea",
+      required: true,
+    },
+    resume,
+    "https://jobs.lever.co/example/123",
+    undefined,
+    companyProfile,
+  );
+  assert.equal(companyFill.value, "Example-specific answer with concrete product motivation.");
+  assert.match(companyFill.reasoning, /company saved answer|semantic company saved answer/);
+  assert.deepEqual(
+    previewProfileAnswer("Why this job?", companyProfile, "https://jobs.lever.co/example/123"),
+    {
+      value: "Example-specific answer with concrete product motivation.",
+      source: "company",
+    },
+  );
 
   const eeoProfile: UserProfile = {
     extras: {},

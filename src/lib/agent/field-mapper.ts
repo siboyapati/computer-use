@@ -12,8 +12,9 @@
  *  1.6. Profile extras — structured ATS-specific fields the user
  *       pre-populated on the Settings page (work auth, salary, start
  *       date, etc). Zero tokens.
- *  1.7. Learned answers — exact or semantic match on a normalized
- *       question key. Populated from Settings or review mode. Zero tokens.
+ *  1.7. Learned answers — company-specific overrides first, then exact
+ *       or semantic match on the general normalized question key.
+ *       Populated from Settings or review mode. Zero tokens.
  *   3.  LLM fallback. One Claude call per question, with the résumé in a
  *       cacheable system block (cache_control: ephemeral) so 20 questions
  *       on the same form pay the résumé token cost once.
@@ -23,10 +24,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Resume } from "./types";
 import {
+  companyScopeFromJobUrl,
   extraToString,
   findBestSemanticQuestionMatch,
   matchExtra,
   normalizeQuestion,
+  type LearnedAnswer,
   type UserProfile,
 } from "./profile-types";
 
@@ -152,6 +155,8 @@ function findDeclineOption(options: string[] | undefined): string | undefined {
  * Priority order within the profile:
  *   - extras (heuristic label → structured field match) — the user filled
  *     in a known ATS field like "salary range" on the Settings page.
+ *   - companyAnswers — company-specific overrides for reusable prose
+ *     questions, inferred from the ATS URL.
  *   - learnedAnswers (exact or semantic normalized-question match) — the
  *     user already answered this question or a close variant.
  *
@@ -160,6 +165,7 @@ function findDeclineOption(options: string[] | undefined): string | undefined {
 function profileAnswer(
   field: FormField,
   profile: UserProfile | undefined,
+  jobUrl: string,
 ): { value: string; reasoning: string } | undefined {
   if (!profile) return undefined;
   const learnedAnswers = profile.learnedAnswers ?? {};
@@ -191,8 +197,26 @@ function profileAnswer(
     if (v) return { value: v, reasoning: `profile: ${extrasKey}` };
   }
 
-  // 1.7: exact or semantic match against the learnedAnswers dictionary.
+  // 1.7a: company-specific answer overrides, when the ATS URL exposes a
+  // stable company slug. These intentionally beat the general answer
+  // library for questions like "Why do you want to work here?"
   const key = normalizeQuestion(field.label);
+  const companyScope = companyScopeFromJobUrl(jobUrl);
+  const companyGroup = companyScope ? profile.companyAnswers?.[companyScope.key] : undefined;
+  const companyLearned = key && companyGroup ? findSavedAnswer(key, companyGroup.answers) : undefined;
+  if (companyLearned?.answer && companyScope) {
+    return {
+      value: companyLearned.answer.answer,
+      reasoning:
+        companyLearned.score === 1
+          ? `company saved answer: ${companyGroup?.label ?? companyScope.label}`
+          : `semantic company saved answer: ${companyGroup?.label ?? companyScope.label} (${Math.round(
+              companyLearned.score * 100,
+            )}% match)`,
+    };
+  }
+
+  // 1.7b: exact or semantic match against the general learnedAnswers dictionary.
   const learned = key ? findSavedAnswer(key, learnedAnswers) : undefined;
   if (learned?.answer) {
     const timesUsed = learned.answer.timesUsed ?? 0;
@@ -212,8 +236,8 @@ function profileAnswer(
 
 function findSavedAnswer(
   fieldKey: string,
-  learnedAnswers: UserProfile["learnedAnswers"],
-): { answer: UserProfile["learnedAnswers"][string]; score: number } | undefined {
+  learnedAnswers: Record<string, LearnedAnswer>,
+): { answer: LearnedAnswer; score: number } | undefined {
   const exact = learnedAnswers[fieldKey];
   if (exact) return { answer: exact, score: 1 };
 
@@ -319,7 +343,7 @@ export async function mapField(
   }
 
   // Tier 1.6 + 1.7: profile.
-  const profileHit = profileAnswer(field, profile);
+  const profileHit = profileAnswer(field, profile, jobUrl);
   if (profileHit) {
     const value = coerceToOption(profileHit.value, field.options);
     return {

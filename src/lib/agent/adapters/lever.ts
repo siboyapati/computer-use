@@ -45,15 +45,16 @@ export async function uploadResume(
   const page = stagehand.context.activePage();
   if (!page) return false;
   const candidates = [
-    'input[name="resume"]',
+    'input[type="file"][name="resume"]',
     'input[type="file"][name*="resume" i]',
     'input[type="file"][id*="resume" i]',
+    'input[type="file"][accept*="pdf" i]',
     'input[type="file"]',
   ];
   for (const sel of candidates) {
     try {
       const locator = page.locator(sel).first();
-      if (await locator.isVisible().catch(() => false) || (await locator.count()) > 0) {
+      if ((await locator.count()) > 0) {
         await locator.setInputFiles(resumePdfPath);
         return true;
       }
@@ -65,5 +66,24 @@ export async function uploadResume(
 }
 
 export async function clickSubmit(stagehand: Stagehand): Promise<void> {
+  const page = stagehand.context.activePage();
+  if (page) {
+    const candidates = [
+      'button[type="submit"]',
+      'xpath=//button[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "submit")]',
+      'input[type="submit"]',
+    ];
+    for (const sel of candidates) {
+      try {
+        const loc = page.locator(sel).first();
+        if ((await loc.count()) > 0) {
+          await loc.click();
+          return;
+        }
+      } catch {
+        // try next
+      }
+    }
+  }
   await stagehand.act("Click the Submit application button at the bottom of the form");
 }

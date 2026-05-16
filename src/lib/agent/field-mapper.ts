@@ -59,17 +59,21 @@ export async function answerCustomQuestion(
 ): Promise<string> {
   const model = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-haiku-4-5";
   const isLong = field.type === "textarea";
-  const sys = `You are filling out a job application on behalf of a candidate. Answer the question concisely and truthfully based ONLY on the candidate's resume. Do not invent experience. If the question asks "why are you interested", reference real overlap between the candidate's background and the role. If you genuinely cannot answer from the resume, return an empty string.
+
+  // Cacheable resume block — Anthropic prompt cache hashes the prefix, so 20
+  // questions on the same form pay the resume token cost once instead of 20×.
+  const resumeBlock = `You are filling out a job application on behalf of a candidate. Answer concisely and truthfully based ONLY on the candidate's resume. Do not invent experience. If the question asks "why are you interested", reference real overlap between the candidate's background and the role. If you genuinely cannot answer from the resume, return an empty string.
 
 Candidate resume (JSON):
-${JSON.stringify(resume, null, 2)}
-
-Job URL: ${jobUrl}`;
+${JSON.stringify(resume, null, 2)}`;
 
   const response = await getClient().messages.create({
     model,
     max_tokens: isLong ? 400 : 80,
-    system: sys,
+    system: [
+      { type: "text", text: resumeBlock, cache_control: { type: "ephemeral" } },
+      { type: "text", text: `Job URL: ${jobUrl}` },
+    ],
     messages: [
       {
         role: "user",
@@ -86,6 +90,14 @@ Return ONLY the value to enter into this field. No preamble, no quotes, no comme
   return block.text.trim().replace(/^["']|["']$/g, "");
 }
 
+const DECLINE_REGEX = /decline|prefer not|do not wish|don.?t wish|rather not|not.*say|not.*answer|wish.*disclose/i;
+const EEO_REGEX = /race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun|orientation|identify/i;
+
+function findDeclineOption(options: string[] | undefined): string | undefined {
+  if (!options || options.length === 0) return undefined;
+  return options.find((o) => DECLINE_REGEX.test(o)) ?? options[options.length - 1];
+}
+
 export async function mapField(
   field: FormField,
   resume: Resume,
@@ -95,14 +107,14 @@ export async function mapField(
   if (det) {
     return { label: field.label, value: det, reasoning: "matched resume directly" };
   }
-  if (/race|ethnic|gender|disab|veteran|hispanic|latino|sex\b|pronoun/i.test(field.label)) {
-    const decline = field.options?.find((o) =>
-      /decline|prefer not|do not wish/i.test(o),
-    );
+  if (EEO_REGEX.test(field.label)) {
+    const decline = findDeclineOption(field.options);
     return {
       label: field.label,
       value: decline ?? "",
-      reasoning: "EEO question — declined by default",
+      reasoning: decline
+        ? `EEO question — picked "${decline}"`
+        : "EEO question — no decline option, left blank",
     };
   }
   const value = await answerCustomQuestion(field, resume, jobUrl);

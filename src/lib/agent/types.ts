@@ -83,12 +83,21 @@ export function detectATS(url: string): ATS | null {
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
-    if (host.endsWith("lever.co")) return "lever";
-    if (host.endsWith("greenhouse.io") || host.includes("greenhouse")) return "greenhouse";
-    if (host.endsWith("ashbyhq.com") || host.includes("ashby")) return "ashby";
+    if (host.endsWith(".lever.co") || host === "lever.co") return "lever";
+    if (host.endsWith(".greenhouse.io") || host === "greenhouse.io") return "greenhouse";
+    if (host.endsWith(".ashbyhq.com") || host === "ashbyhq.com") return "ashby";
     return null;
   } catch {
     return null;
+  }
+}
+
+export function isLikelyValidPostingUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.pathname.split("/").filter(Boolean).length >= 2;
+  } catch {
+    return false;
   }
 }
 
@@ -98,9 +107,11 @@ export type AgentEventKind =
   | "form_extracted"
   | "field_filled"
   | "file_uploaded"
+  | "awaiting_review"
   | "submitting"
   | "submitted"
   | "screenshot"
+  | "stopped"
   | "error"
   | "completed";
 
@@ -117,9 +128,11 @@ export type RunStatus =
   | "starting"
   | "navigating"
   | "filling"
+  | "awaiting_review"
   | "submitting"
   | "submitted"
-  | "failed";
+  | "failed"
+  | "stopped";
 
 export interface RunMetadata {
   runId: string;

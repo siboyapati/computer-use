@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, ExternalLink, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, ExternalLink, Loader2, Sparkles, Square, Send } from "lucide-react";
 import Image from "next/image";
 import { EventLog } from "./event-log";
+import { toast } from "sonner";
 import type { AgentEvent, RunMetadata, RunStatus } from "@/lib/agent/types";
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
   events: AgentEvent[];
   meta: RunMetadata | null;
   onRestart: () => void;
+  onApplyAnother: () => void;
 }
 
 const PHASES: Array<{ key: RunStatus; label: string }> = [
@@ -23,10 +25,12 @@ const PHASES: Array<{ key: RunStatus; label: string }> = [
   { key: "submitted", label: "Done" },
 ];
 
-export function LiveRun({ runId, liveUrl, events, meta, onRestart }: Props) {
+export function LiveRun({ runId, liveUrl, events, meta, onRestart, onApplyAnother }: Props) {
   const status: RunStatus = meta?.status ?? "starting";
-  const isDone = status === "submitted" || status === "failed";
+  const isDone = status === "submitted" || status === "failed" || status === "stopped";
   const [showCelebration, setShowCelebration] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [stopping, setStopping] = useState(false);
 
   useEffect(() => {
     if (status === "submitted") {
@@ -34,6 +38,33 @@ export function LiveRun({ runId, liveUrl, events, meta, onRestart }: Props) {
       return () => clearTimeout(t);
     }
   }, [status]);
+
+  async function handleStop() {
+    if (stopping || isDone) return;
+    setStopping(true);
+    try {
+      await fetch(`/api/stop/${runId}`, { method: "POST" });
+      toast.message("Stopping…", { description: "The agent will halt at the next step." });
+    } catch {
+      toast.error("Couldn't reach the server to stop the run");
+    } finally {
+      setStopping(false);
+    }
+  }
+
+  async function handleSubmitNow() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/submit-now/${runId}`, { method: "POST" });
+      if (!res.ok) throw new Error("Server rejected the submit request");
+      toast.message("Submitting…", { description: "Watch the live browser." });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't submit");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <motion.div
@@ -43,7 +74,16 @@ export function LiveRun({ runId, liveUrl, events, meta, onRestart }: Props) {
       transition={{ type: "spring", stiffness: 220, damping: 28 }}
       className="mx-auto flex h-[calc(100vh-4rem)] w-full max-w-[1700px] flex-col gap-4 px-4 pt-6 pb-6 md:px-8"
     >
-      <Header runId={runId} meta={meta} status={status} onRestart={onRestart} />
+      <Header
+        meta={meta}
+        status={status}
+        isDone={isDone}
+        stopping={stopping}
+        submitting={submitting}
+        onRestart={onApplyAnother}
+        onStop={handleStop}
+        onSubmitNow={handleSubmitNow}
+      />
 
       <PhaseStrip status={status} />
 
@@ -59,14 +99,16 @@ export function LiveRun({ runId, liveUrl, events, meta, onRestart }: Props) {
             onClose={() => setShowCelebration(false)}
             onRestart={() => {
               setShowCelebration(false);
-              onRestart();
+              onApplyAnother();
             }}
           />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
-        {isDone && status === "failed" && <FailedBanner message={meta?.error ?? "Run failed"} onRestart={onRestart} />}
+        {isDone && status === "failed" && (
+          <FailedBanner message={meta?.error ?? "Run failed"} onRestart={onRestart} />
+        )}
       </AnimatePresence>
     </motion.div>
   );
@@ -75,15 +117,24 @@ export function LiveRun({ runId, liveUrl, events, meta, onRestart }: Props) {
 function Header({
   meta,
   status,
+  isDone,
+  stopping,
+  submitting,
   onRestart,
+  onStop,
+  onSubmitNow,
 }: {
-  runId: string;
   meta: RunMetadata | null;
   status: RunStatus;
+  isDone: boolean;
+  stopping: boolean;
+  submitting: boolean;
   onRestart: () => void;
+  onStop: () => void;
+  onSubmitNow: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between gap-3">
       <button
         type="button"
         onClick={onRestart}
@@ -92,12 +143,34 @@ function Header({
         <ArrowLeft className="size-3" />
         New application
       </button>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         {meta?.company && (
-          <div className="text-sm">
+          <div className="hidden text-sm md:block">
             <span className="text-muted-foreground">Applying to</span>{" "}
             <span className="font-medium text-foreground">{meta.company}</span>
           </div>
+        )}
+        {status === "awaiting_review" && (
+          <button
+            type="button"
+            onClick={onSubmitNow}
+            disabled={submitting}
+            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-sm transition hover:opacity-90 disabled:opacity-50"
+          >
+            {submitting ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+            Submit for real
+          </button>
+        )}
+        {!isDone && (
+          <button
+            type="button"
+            onClick={onStop}
+            disabled={stopping}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card/40 px-3 py-1.5 text-xs text-muted-foreground transition hover:border-destructive/40 hover:text-destructive disabled:opacity-50"
+          >
+            {stopping ? <Loader2 className="size-3 animate-spin" /> : <Square className="size-3" />}
+            Stop
+          </button>
         )}
         <StatusPill status={status} />
       </div>
@@ -106,57 +179,72 @@ function Header({
 }
 
 function StatusPill({ status }: { status: RunStatus }) {
-  const text =
-    status === "submitted"
-      ? "Submitted"
-      : status === "failed"
-        ? "Failed"
-        : status === "submitting"
-          ? "Submitting"
-          : status === "filling"
-            ? "Filling"
-            : status === "navigating"
-              ? "Reading"
-              : "Starting";
-  const tone =
-    status === "submitted"
-      ? "bg-primary/20 text-primary border-primary/40"
-      : status === "failed"
-        ? "bg-destructive/20 text-destructive border-destructive/40"
-        : "bg-card/50 text-foreground/85 border-border";
+  const text: Record<RunStatus, string> = {
+    starting: "Starting",
+    navigating: "Reading",
+    filling: "Filling",
+    awaiting_review: "Awaiting review",
+    submitting: "Submitting",
+    submitted: "Submitted",
+    failed: "Failed",
+    stopped: "Stopped",
+  };
+  let tone = "bg-card/50 text-foreground/85 border-border";
+  if (status === "submitted") tone = "bg-primary/20 text-primary border-primary/40";
+  else if (status === "failed") tone = "bg-destructive/20 text-destructive border-destructive/40";
+  else if (status === "stopped") tone = "bg-muted text-muted-foreground border-border";
+  else if (status === "awaiting_review") tone = "bg-amber-500/15 text-amber-300 border-amber-500/30";
+  const spinning = !["submitted", "failed", "stopped", "awaiting_review"].includes(status);
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.18em] ${tone}`}>
-      {!["submitted", "failed"].includes(status) && <Loader2 className="size-3 animate-spin" />}
-      {text}
+      {spinning && <Loader2 className="size-3 animate-spin" />}
+      {text[status]}
     </span>
   );
 }
 
 function PhaseStrip({ status }: { status: RunStatus }) {
-  const idx = PHASES.findIndex((p) => p.key === status);
+  const failed = status === "failed" || status === "stopped";
+  // Map awaiting_review to the "filling" stage so it doesn't jump backwards
+  const effectiveStatus: RunStatus =
+    status === "awaiting_review" ? "filling" : status;
+  let idx = PHASES.findIndex((p) => p.key === effectiveStatus);
+  if (failed) idx = PHASES.length; // light up everything, then color differently
   return (
     <div className="flex items-center gap-2">
       {PHASES.map((p, i) => {
         const active = i <= idx;
-        const current = i === idx;
+        const current = i === idx && !failed;
+        const color = failed
+          ? "bg-destructive"
+          : active
+            ? "bg-primary"
+            : "bg-muted-foreground/30";
+        const lineColor = failed
+          ? "bg-destructive/40"
+          : active
+            ? "bg-primary/40"
+            : "bg-border";
         return (
           <div key={p.key} className="flex flex-1 items-center gap-2">
             <div className="flex items-center gap-2">
-              <span
-                className={`size-1.5 rounded-full transition-colors ${
-                  active ? "bg-primary" : "bg-muted-foreground/30"
-                }`}
-              />
+              <span className={`size-1.5 rounded-full transition-colors ${color}`} />
               <span
                 className={`text-[10px] uppercase tracking-[0.16em] transition-colors ${
-                  current ? "text-foreground" : active ? "text-foreground/70" : "text-muted-foreground/50"
+                  failed
+                    ? "text-destructive/80"
+                    : current
+                      ? "text-foreground"
+                      : active
+                        ? "text-foreground/70"
+                        : "text-muted-foreground/50"
                 }`}
               >
                 {p.label}
               </span>
             </div>
             {i < PHASES.length - 1 && (
-              <span className={`h-px flex-1 transition-colors ${active ? "bg-primary/40" : "bg-border"}`} />
+              <span className={`h-px flex-1 transition-colors ${lineColor}`} />
             )}
           </div>
         );
@@ -182,13 +270,14 @@ function BrowserPane({ liveUrl, status }: { liveUrl: string | null; status: RunS
           <iframe
             src={liveUrl}
             className="absolute inset-0 h-full w-full"
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
             title="Live browser session"
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
             <Loader2 className="size-5 animate-spin text-primary" />
             <span className="text-sm">Provisioning cloud browser…</span>
+            <span className="text-xs text-muted-foreground/60">This usually takes 5–15 seconds.</span>
           </div>
         )}
       </div>
@@ -234,11 +323,15 @@ function LogPane({ events, status }: { events: AgentEvent[]; status: RunStatus }
       <div className="min-h-0 flex-1">
         <EventLog events={events} />
       </div>
-      {status !== "submitted" && status !== "failed" && (
+      {status === "awaiting_review" ? (
+        <div className="border-t border-amber-500/30 bg-amber-500/5 px-4 py-2 font-mono text-[11px] text-amber-200/90">
+          ⏸ paused for review — click <span className="font-semibold">Submit for real</span> above
+        </div>
+      ) : status !== "submitted" && status !== "failed" && status !== "stopped" ? (
         <div className="border-t border-border/60 px-4 py-2 font-mono text-[11px] text-muted-foreground">
           <span className="inline-block animate-pulse">▍</span> thinking
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

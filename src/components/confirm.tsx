@@ -2,12 +2,19 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ArrowRight, ArrowLeft, Loader2, AlertCircle, Send } from "lucide-react";
+import { ArrowRight, ArrowLeft, Loader2, AlertCircle, Send, ShieldCheck, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ResumeCard } from "./resume-card";
-import { detectATS, MODEL_CHOICES, type ATS, type LLMProvider, type Resume } from "@/lib/agent/types";
+import {
+  detectATS,
+  isLikelyValidPostingUrl,
+  MODEL_CHOICES,
+  type ATS,
+  type LLMProvider,
+  type Resume,
+} from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -15,8 +22,13 @@ interface Props {
   fileName: string;
   initialUrl?: string;
   initialProvider?: LLMProvider;
+  initialReviewMode?: boolean;
   onBack: () => void;
-  onStart: (jobUrl: string, provider: LLMProvider) => Promise<void>;
+  onStart: (
+    jobUrl: string,
+    provider: LLMProvider,
+    reviewMode: boolean,
+  ) => Promise<void>;
 }
 
 export function Confirm({
@@ -24,16 +36,19 @@ export function Confirm({
   fileName,
   initialUrl = "",
   initialProvider = "anthropic",
+  initialReviewMode = true,
   onBack,
   onStart,
 }: Props) {
   const [jobUrl, setJobUrl] = useState(initialUrl);
   const [provider, setProvider] = useState<LLMProvider>(initialProvider);
+  const [reviewMode, setReviewMode] = useState(initialReviewMode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const ats: ATS | null = detectATS(jobUrl);
-  const canStart = Boolean(ats) && !busy;
+  const urlOk = Boolean(ats) && isLikelyValidPostingUrl(jobUrl);
+  const canStart = urlOk && !busy;
 
   return (
     <motion.div
@@ -93,14 +108,38 @@ export function Confirm({
             <ModelToggle provider={provider} onChange={setProvider} />
           </div>
 
-          <div className="flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/90">
-            <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-400" />
-            <div>
-              <span className="font-medium text-amber-100">Heads up — this submits for real.</span>{" "}
-              The agent will click submit after filling every field. Use a posting you actually want
-              to apply to.
+          <div className="glass rounded-2xl p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-foreground">
+                {reviewMode ? (
+                  <ShieldCheck className="size-4 text-primary" />
+                ) : (
+                  <Zap className="size-4 text-amber-400" />
+                )}
+                <span className="font-medium">
+                  {reviewMode ? "Review before submit" : "Auto-submit"}
+                </span>
+              </div>
+              <ReviewModeToggle value={reviewMode} onChange={setReviewMode} />
             </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {reviewMode
+                ? "Agent fills + uploads, then pauses. You click 'Submit for real' on the live screen."
+                : "Agent clicks submit on its own once every field is filled."}
+            </p>
           </div>
+
+          {!reviewMode && (
+            <div className="flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs text-amber-200/90">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-400" />
+              <div>
+                <span className="font-medium text-amber-100">
+                  Heads up — auto-submit is on.
+                </span>{" "}
+                The agent will click submit without asking. Use a posting you actually want to apply to.
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
@@ -116,9 +155,10 @@ export function Confirm({
               setError(null);
               setBusy(true);
               try {
-                await onStart(jobUrl, provider);
+                await onStart(jobUrl, provider, reviewMode);
               } catch (e) {
                 setError(e instanceof Error ? e.message : "Failed to start");
+              } finally {
                 setBusy(false);
               }
             }}
@@ -145,12 +185,45 @@ export function Confirm({
 function ATSBadge({ ats, url }: { ats: ATS | null; url: string }) {
   if (!url) return <span className="text-xs text-muted-foreground/70">Paste a Lever, Greenhouse, or Ashby URL</span>;
   if (!ats) return <span className="text-xs text-destructive/80">Unsupported ATS</span>;
+  if (!isLikelyValidPostingUrl(url))
+    return <span className="text-xs text-amber-300/80">URL needs a posting path (not just the host)</span>;
   const label = ats[0].toUpperCase() + ats.slice(1);
   return (
     <span className="inline-flex items-center gap-1.5 text-xs">
       <span className="size-1.5 animate-pulse rounded-full bg-primary" />
       <span className="text-foreground/80">{label} detected</span>
     </span>
+  );
+}
+
+function ReviewModeToggle({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      onClick={() => onChange(!value)}
+      className={cn(
+        "relative inline-flex h-6 w-11 items-center rounded-full border transition",
+        value ? "bg-primary/30 border-primary/50" : "bg-muted border-border",
+      )}
+    >
+      <motion.span
+        layout
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        className={cn(
+          "block size-5 rounded-full shadow-sm",
+          value ? "bg-primary" : "bg-foreground/60",
+        )}
+        style={{ marginLeft: value ? "calc(100% - 1.25rem - 2px)" : "2px" }}
+      />
+    </button>
   );
 }
 

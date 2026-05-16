@@ -2,15 +2,28 @@
 
 import { useCallback, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Upload, FileText, Sparkles, Loader2 } from "lucide-react";
+import { Upload, FileText, Sparkles, Loader2, RotateCcw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RunHistoryStrip } from "./run-history";
+import type { HistoryItem, StoredResume } from "@/lib/storage";
 
 interface Props {
   onParsed: (data: { resume: unknown; pdfBase64: string; fileName: string }) => void;
   onError: (message: string) => void;
+  storedResume: StoredResume | null;
+  history: HistoryItem[];
+  onUseStoredResume: () => void;
+  onForgetStoredResume: () => void;
 }
 
-export function Landing({ onParsed, onError }: Props) {
+export function Landing({
+  onParsed,
+  onError,
+  storedResume,
+  history,
+  onUseStoredResume,
+  onForgetStoredResume,
+}: Props) {
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +106,31 @@ export function Landing({ onParsed, onError }: Props) {
             if (f) handleFile(f);
           }}
         />
+
+        {storedResume && !busy && (
+          <motion.div
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-3 flex items-center justify-center gap-2 text-xs text-muted-foreground"
+          >
+            <button
+              type="button"
+              onClick={onUseStoredResume}
+              className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-primary transition hover:bg-primary/20"
+            >
+              <RotateCcw className="size-3" />
+              Use last résumé ({storedResume.resume.personal.firstName}, {storedResume.fileName})
+            </button>
+            <button
+              type="button"
+              onClick={onForgetStoredResume}
+              className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-muted-foreground/70 hover:text-foreground"
+              aria-label="Forget stored résumé"
+            >
+              <X className="size-3" />
+            </button>
+          </motion.div>
+        )}
       </div>
 
       <div className="mt-10 flex items-center gap-6 text-xs uppercase tracking-[0.18em] text-muted-foreground">
@@ -102,6 +140,8 @@ export function Landing({ onParsed, onError }: Props) {
         <Dot />
         <Supports name="Ashby" />
       </div>
+
+      <RunHistoryStrip items={history} />
     </motion.div>
   );
 }

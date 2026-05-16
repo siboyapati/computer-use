@@ -2,7 +2,18 @@
 
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Check, AlertTriangle, Upload, Eye, MousePointerClick, Globe2, Search, Sparkles } from "lucide-react";
+import {
+  Check,
+  AlertTriangle,
+  Upload,
+  Eye,
+  MousePointerClick,
+  Globe2,
+  Search,
+  Sparkles,
+  Pause,
+  Square,
+} from "lucide-react";
 import type { AgentEvent, AgentEventKind } from "@/lib/agent/types";
 
 interface Props {
@@ -76,9 +87,11 @@ const STYLES: Record<AgentEventKind, { icon: React.ReactNode; label: string; col
   form_extracted: { icon: <Search className="size-3" />, label: "read", color: "text-violet-300" },
   field_filled: { icon: <Check className="size-3" />, label: "fill", color: "text-emerald-300" },
   file_uploaded: { icon: <Upload className="size-3" />, label: "upload", color: "text-emerald-300" },
+  awaiting_review: { icon: <Pause className="size-3" />, label: "pause", color: "text-amber-300" },
   submitting: { icon: <MousePointerClick className="size-3" />, label: "submit", color: "text-primary" },
   submitted: { icon: <Check className="size-3" />, label: "done", color: "text-primary" },
   screenshot: { icon: <Eye className="size-3" />, label: "shot", color: "text-muted-foreground" },
+  stopped: { icon: <Square className="size-3" />, label: "stop", color: "text-muted-foreground" },
   error: { icon: <AlertTriangle className="size-3" />, label: "err", color: "text-destructive" },
   completed: { icon: <Check className="size-3" />, label: "done", color: "text-primary" },
 };

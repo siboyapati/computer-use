@@ -1,19 +1,30 @@
 "use client";
 
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { Landing } from "@/components/landing";
 import { Confirm } from "@/components/confirm";
 import { LiveRun } from "@/components/live-run";
 import { INITIAL_STATE, type AppState } from "@/lib/client-types";
-import { ResumeSchema, type AgentEvent, type LLMProvider, type RunMetadata, type ATS } from "@/lib/agent/types";
+import { ResumeSchema, type AgentEvent, type LLMProvider, type RunMetadata } from "@/lib/agent/types";
+import {
+  loadResume,
+  saveResume,
+  clearResume,
+  loadHistory,
+  recordRun,
+  type HistoryItem,
+  type StoredResume,
+} from "@/lib/storage";
 
 type Action =
   | { type: "PARSED"; resume: AppState["resume"]; pdfBase64: string; fileName: string }
+  | { type: "USE_STORED"; resume: AppState["resume"]; pdfBase64: string; fileName: string }
   | { type: "BACK_TO_LANDING" }
+  | { type: "APPLY_ANOTHER" }
   | { type: "START_PENDING" }
-  | { type: "STARTED"; runId: string; liveUrl: string | null; ats: ATS }
+  | { type: "STARTED"; runId: string; liveUrl: string | null; ats: AppState["ats"] }
   | { type: "EVENT"; event: AgentEvent }
   | { type: "META"; meta: RunMetadata }
   | { type: "ERROR"; message: string }
@@ -22,6 +33,7 @@ type Action =
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "PARSED":
+    case "USE_STORED":
       return {
         ...state,
         phase: "confirm",
@@ -31,6 +43,25 @@ function reducer(state: AppState, action: Action): AppState {
         error: null,
       };
     case "BACK_TO_LANDING":
+      // Keep résumé in state so Landing offers "Use last résumé" without re-upload
+      return {
+        ...INITIAL_STATE,
+        resume: state.resume,
+        pdfBase64: state.pdfBase64,
+        fileName: state.fileName,
+      };
+    case "APPLY_ANOTHER":
+      // Same as BACK_TO_LANDING but jump straight to confirm so user can paste a new URL
+      if (state.resume && state.pdfBase64) {
+        return {
+          ...INITIAL_STATE,
+          phase: "confirm",
+          resume: state.resume,
+          pdfBase64: state.pdfBase64,
+          fileName: state.fileName,
+          provider: state.provider,
+        };
+      }
       return INITIAL_STATE;
     case "START_PENDING":
       return { ...state, phase: "starting", error: null, events: [], meta: null };
@@ -60,6 +91,35 @@ function reducer(state: AppState, action: Action): AppState {
 export default function Page() {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const sseRef = useRef<EventSource | null>(null);
+  const [storedResume, setStoredResume] = useState<StoredResume | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
+  // Hydrate from localStorage on first mount (client-only)
+  useEffect(() => {
+    setStoredResume(loadResume());
+    setHistory(loadHistory());
+  }, []);
+
+  // Persist parsed résumé so it survives refresh
+  useEffect(() => {
+    if (state.resume && state.pdfBase64 && state.fileName) {
+      saveResume({ resume: state.resume, pdfBase64: state.pdfBase64, fileName: state.fileName });
+      setStoredResume({
+        resume: state.resume,
+        pdfBase64: state.pdfBase64,
+        fileName: state.fileName,
+        storedAt: Date.now(),
+      });
+    }
+  }, [state.resume, state.pdfBase64, state.fileName]);
+
+  // Record finished runs into history
+  useEffect(() => {
+    if (!state.meta || !state.ats) return;
+    if (state.meta.status !== "submitted" && state.meta.status !== "failed") return;
+    recordRun(state.meta, state.ats);
+    setHistory(loadHistory());
+  }, [state.meta, state.ats]);
 
   useEffect(() => {
     return () => {
@@ -105,6 +165,22 @@ export default function Page() {
         {state.phase === "landing" && (
           <Landing
             key="landing"
+            storedResume={storedResume}
+            history={history}
+            onUseStoredResume={() => {
+              if (!storedResume) return;
+              dispatch({
+                type: "USE_STORED",
+                resume: storedResume.resume,
+                pdfBase64: storedResume.pdfBase64,
+                fileName: storedResume.fileName,
+              });
+            }}
+            onForgetStoredResume={() => {
+              clearResume();
+              setStoredResume(null);
+              toast.message("Forgot stored résumé");
+            }}
             onParsed={({ resume, pdfBase64, fileName }) => {
               const parsed = ResumeSchema.safeParse(resume);
               if (!parsed.success) {
@@ -124,7 +200,7 @@ export default function Page() {
             initialUrl={state.jobUrl}
             initialProvider={state.provider}
             onBack={() => dispatch({ type: "BACK_TO_LANDING" })}
-            onStart={async (jobUrl: string, provider: LLMProvider) => {
+            onStart={async (jobUrl: string, provider: LLMProvider, reviewMode: boolean) => {
               dispatch({ type: "START_PENDING" });
               const res = await fetch("/api/start", {
                 method: "POST",
@@ -134,6 +210,7 @@ export default function Page() {
                   pdfBase64: state.pdfBase64,
                   jobUrl,
                   provider,
+                  reviewMode,
                 }),
               });
               if (!res.ok) {
@@ -157,7 +234,8 @@ export default function Page() {
             liveUrl={state.liveUrl}
             events={state.events}
             meta={state.meta}
-            onRestart={() => dispatch({ type: "RESET" })}
+            onRestart={() => dispatch({ type: "BACK_TO_LANDING" })}
+            onApplyAnother={() => dispatch({ type: "APPLY_ANOTHER" })}
           />
         )}
       </AnimatePresence>

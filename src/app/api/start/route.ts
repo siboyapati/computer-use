@@ -12,6 +12,7 @@ const StartSchema = z.object({
   pdfBase64: z.string().min(1),
   jobUrl: z.string().url(),
   provider: z.enum(["anthropic", "google"]).default("anthropic"),
+  reviewMode: z.boolean().default(true),
 });
 
 export async function POST(req: Request) {
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.message }, { status: 400 });
     }
-    const { resume, pdfBase64, jobUrl, provider } = parsed.data;
+    const { resume, pdfBase64, jobUrl, provider, reviewMode } = parsed.data;
     const ats = detectATS(jobUrl);
     if (!ats) {
       return NextResponse.json(
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
     const runId = newRunId();
     createRun({ runId, jobUrl, ats });
 
-    void runApplication({ runId, resume, resumePdfBase64: pdfBase64, jobUrl, ats, provider });
+    void runApplication({ runId, resume, resumePdfBase64: pdfBase64, jobUrl, ats, provider, reviewMode });
 
     // Wait briefly so we can return liveUrl in the initial response
     const liveUrl = await waitForLiveUrl(runId, 8000);

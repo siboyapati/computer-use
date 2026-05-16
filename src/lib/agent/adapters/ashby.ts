@@ -46,5 +46,24 @@ export async function uploadResume(stagehand: Stagehand, resumePdfPath: string):
 }
 
 export async function clickSubmit(stagehand: Stagehand): Promise<void> {
+  const page = stagehand.context.activePage();
+  if (page) {
+    const candidates = [
+      'button[type="submit"]',
+      'xpath=//button[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "submit application")]',
+      'xpath=//button[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "submit")]',
+    ];
+    for (const sel of candidates) {
+      try {
+        const loc = page.locator(sel).first();
+        if ((await loc.count()) > 0) {
+          await loc.click();
+          return;
+        }
+      } catch {
+        // try next
+      }
+    }
+  }
   await stagehand.act("Click the Submit Application button at the bottom of the form");
 }

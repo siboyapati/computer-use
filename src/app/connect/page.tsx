@@ -5,6 +5,8 @@ import Link from "next/link";
 import { motion } from "motion/react";
 import { Check, AlertCircle, Loader2, Plug, ArrowRight } from "lucide-react";
 import { loadResume, type StoredResume } from "@/lib/storage";
+import { keysForRequest, loadKeys } from "@/lib/keys";
+import { loadProfile } from "@/lib/profile";
 import { Button } from "@/components/ui/button";
 
 // Chrome's API typing isn't bundled by default. Declare a minimal shape we use.
@@ -44,21 +46,28 @@ function ConnectInner() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get("ext_id");
-    if (!id) {
-      setError("Missing ext_id parameter. Open this page from the extension's options.");
-      setStatus("error");
-      return;
-    }
-    setExtId(id);
-    const resume = loadResume();
-    if (!resume) {
-      setStatus("no-resume");
-      return;
-    }
-    setStored(resume);
-    setStatus("ready");
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get("ext_id");
+      if (!id) {
+        setError("Missing ext_id parameter. Open this page from the extension's options.");
+        setStatus("error");
+        return;
+      }
+      setExtId(id);
+      const resume = loadResume();
+      if (!resume) {
+        setStatus("no-resume");
+        return;
+      }
+      setStored(resume);
+      setStatus("ready");
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handlePair() {
@@ -80,6 +89,8 @@ function ConnectInner() {
             pdfBase64: stored.pdfBase64,
             fileName: stored.fileName,
             apiBase: window.location.origin,
+            userKeys: keysForRequest(loadKeys()),
+            profile: loadProfile(),
           },
           (response: unknown) => {
             const lastError = chrome.runtime?.lastError;

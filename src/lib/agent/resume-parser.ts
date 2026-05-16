@@ -1,15 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { ResumeSchema, type Resume } from "./types";
 
-let client: Anthropic | null = null;
+let defaultClient: Anthropic | null = null;
 
-function getClient(): Anthropic {
-  if (!client) {
+function getDefaultClient(): Anthropic {
+  if (!defaultClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-    client = new Anthropic({ apiKey });
+    defaultClient = new Anthropic({ apiKey });
   }
-  return client;
+  return defaultClient;
+}
+
+// Construct a fresh client when a user-provided key is passed; otherwise
+// reuse the cached default client. Per-request keys never get stored.
+function clientFor(apiKey?: string): Anthropic {
+  if (apiKey) return new Anthropic({ apiKey });
+  return getDefaultClient();
 }
 
 const TOOL = {
@@ -84,9 +91,12 @@ const TOOL = {
   },
 };
 
-export async function parseResumeFromPdf(pdfBuffer: Buffer): Promise<Resume> {
+export async function parseResumeFromPdf(
+  pdfBuffer: Buffer,
+  apiKey?: string,
+): Promise<Resume> {
   const model = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-haiku-4-5";
-  const response = await getClient().messages.create({
+  const response = await clientFor(apiKey).messages.create({
     model,
     max_tokens: 4096,
     tools: [TOOL],

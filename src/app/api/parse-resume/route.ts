@@ -26,8 +26,28 @@ export async function POST(req: Request) {
       return withCors(NextResponse.json({ error: "Only PDFs are supported" }, { status: 400 }));
     }
 
+    // Optional user-provided Anthropic key. multipart/form-data field;
+    // the client (Landing component) appends it when present in localStorage.
+    const userAnthropicKeyRaw = form.get("anthropicKey");
+    const userAnthropicKey =
+      typeof userAnthropicKeyRaw === "string" && userAnthropicKeyRaw.trim().length > 0
+        ? userAnthropicKeyRaw.trim()
+        : undefined;
+
+    if (!(userAnthropicKey || process.env.ANTHROPIC_API_KEY)) {
+      return withCors(
+        NextResponse.json(
+          {
+            error:
+              "Anthropic API key not configured. Add it on the Settings page or set ANTHROPIC_API_KEY on the server.",
+          },
+          { status: 400 },
+        ),
+      );
+    }
+
     const buf = Buffer.from(await file.arrayBuffer());
-    const resume = await parseResumeFromPdf(buf);
+    const resume = await parseResumeFromPdf(buf, userAnthropicKey);
     const pdfBase64 = buf.toString("base64");
 
     return withCors(NextResponse.json({ resume, pdfBase64 }));

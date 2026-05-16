@@ -8,14 +8,16 @@ All env vars used by the web app and the extension, with whether they're require
 
 Copy [.env.local.example](../../.env.local.example) → `.env.local` and fill in.
 
-### Required
+> **Note:** Env vars are now **fallbacks**. The Settings page (`/settings` on the web app, options page in the extension) lets each user paste their own keys, stored in `localStorage` / `chrome.storage.local` and sent with each `/api/start` call. The server uses the user-provided key if present, otherwise falls back to the env var below. For a single-operator deployment you can keep just env vars; for a hosted demo with bring-your-own-keys users, env vars become optional. See [features/keys-settings.md](../features/keys-settings.md).
+
+### Required (or user-provided via Settings)
 
 | Variable | Used for | Where read |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Résumé parsing (always) + agent runtime (when provider=anthropic) + custom-question fallback (always) | [src/lib/agent/resume-parser.ts](../../src/lib/agent/resume-parser.ts), [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts), [src/lib/agent/runner.ts](../../src/lib/agent/runner.ts) |
+| `ANTHROPIC_API_KEY` | Résumé parsing + custom-question Claude call + Claude agent | [src/lib/agent/resume-parser.ts](../../src/lib/agent/resume-parser.ts), [src/lib/agent/field-mapper.ts](../../src/lib/agent/field-mapper.ts), [src/lib/agent/runner.ts](../../src/lib/agent/runner.ts) |
 | `STEEL_API_KEY` | Cloud browser provisioning | [src/lib/agent/steel.ts](../../src/lib/agent/steel.ts) |
 
-If either is missing, the relevant code throws on first use. The error bubbles up to the user via toast.
+At least one of (env var) OR (user-provided key on Settings) must be set for each provider used in a run. If neither is configured when the user clicks Start, `/api/start` returns 400 with a clear error pointing the user to the Settings page.
 
 ### Optional
 

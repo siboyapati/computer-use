@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Plug,
   Check,
@@ -8,10 +8,14 @@ import {
   Sparkles,
   ArrowRight,
   Globe2,
+  KeyRound,
+  Eye,
+  EyeOff,
+  AlertCircle,
 } from "lucide-react";
-import { loadConfig, clearConfig } from "~lib/storage";
-import { connectUrl } from "~lib/api";
-import type { StoredConfig } from "~lib/types";
+import { loadConfig, clearConfig, updateUserKeys, maskKey } from "~lib/storage";
+import { connectUrl, testKey } from "~lib/api";
+import type { StoredConfig, UserKeys } from "~lib/types";
 import "./styles.css";
 
 const API_BASE = process.env.PLASMO_PUBLIC_API_BASE ?? "http://localhost:3000";
@@ -20,8 +24,15 @@ function Options() {
   const [config, setConfig] = useState<StoredConfig | null>(null);
   const [pairing, setPairing] = useState(false);
 
+  const refresh = useCallback(async () => {
+    const c = await loadConfig();
+    setConfig(c);
+  }, []);
+
   useEffect(() => {
-    void refresh();
+    queueMicrotask(() => {
+      void refresh();
+    });
     const onChanged = (changes: { [key: string]: chrome.storage.StorageChange }) => {
       if ("autoapply.config.v1" in changes) {
         setPairing(false);
@@ -30,12 +41,7 @@ function Options() {
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
-  }, []);
-
-  async function refresh() {
-    const c = await loadConfig();
-    setConfig(c);
-  }
+  }, [refresh]);
 
   function handleConnect() {
     setPairing(true);
@@ -208,6 +214,8 @@ function Options() {
               </button>
             </div>
 
+            <KeysSection apiBase={config.apiBase} userKeys={config.userKeys ?? {}} />
+
             <div className="glass rounded-2xl p-5">
               <div className="text-[10px] uppercase tracking-[0.18em] text-muted">How it works</div>
               <p className="mt-2 text-[13px] text-sub leading-relaxed">
@@ -219,6 +227,14 @@ function Options() {
                 <span className="text-accent">Submit for real</span> when you&apos;re happy.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Keys are also shown in the unpaired state so users can set them
+            up before pairing if they want. */}
+        {config?.paired === false && (
+          <div className="mt-6 animate-fade-up">
+            <KeysSection apiBase={API_BASE} userKeys={config.userKeys ?? {}} />
           </div>
         )}
 
@@ -239,6 +255,245 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
       <span className="text-ink/80">{children}</span>
     </li>
   );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Keys section — Settings UI for per-extension API key overrides.
+// Mirrors the web app's Settings page; lives directly on the options page
+// here because the extension already IS a settings surface.
+// ──────────────────────────────────────────────────────────────────────────
+
+type Provider = "anthropic" | "google" | "steel";
+
+interface KeySpec {
+  id: Provider;
+  label: string;
+  description: string;
+  placeholder: string;
+  console: string;
+  required: boolean;
+}
+
+const KEY_SPECS: KeySpec[] = [
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    description: "Required. Drives résumé parsing and the Claude agent.",
+    placeholder: "sk-ant-…",
+    console: "https://console.anthropic.com",
+    required: true,
+  },
+  {
+    id: "steel",
+    label: "Steel.dev",
+    description: "Required. Provisions the cloud Chromium session.",
+    placeholder: "ste_…",
+    console: "https://app.steel.dev",
+    required: true,
+  },
+  {
+    id: "google",
+    label: "Google Gemini",
+    description: "Optional. Only needed if you pick the Gemini agent.",
+    placeholder: "AIza…",
+    console: "https://aistudio.google.com/app/apikey",
+    required: false,
+  },
+];
+
+function KeysSection({ apiBase, userKeys }: { apiBase: string; userKeys: UserKeys }) {
+  return (
+    <div className="glass rounded-2xl p-5">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-muted">
+        <KeyRound className="size-3 text-accent" />
+        API keys
+      </div>
+      <p className="mt-2 text-[12px] text-sub leading-relaxed">
+        Keys stored locally in the extension. Sent to{" "}
+        <span className="text-ink/85">{hostnameOf(apiBase)}</span> only during a run.
+        If empty, the server falls back to its own env vars.
+      </p>
+      <div className="mt-4 flex flex-col gap-3">
+        {KEY_SPECS.map((spec) => (
+          <KeyRow key={spec.id} spec={spec} apiBase={apiBase} value={userKeys[spec.id] ?? ""} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function KeyRow({
+  spec,
+  apiBase,
+  value,
+}: {
+  spec: KeySpec;
+  apiBase: string;
+  value: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [show, setShow] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setDraft(value);
+      setResult(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
+  const dirty = draft.trim() !== value.trim();
+  const hasKey = Boolean(value);
+
+  async function handleTest() {
+    if (!draft.trim()) {
+      setResult({ ok: false, message: "Enter a key first." });
+      return;
+    }
+    setTesting(true);
+    setResult(null);
+    try {
+      const body = await testKey(apiBase, spec.id, draft.trim());
+      setResult({
+        ok: Boolean(body.ok),
+        message: body.ok ? body.info ?? "Key works." : body.error ?? "Test failed.",
+      });
+    } catch (e) {
+      setResult({
+        ok: false,
+        message: e instanceof Error ? e.message : "Couldn't reach test endpoint.",
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateUserKeys({ [spec.id]: draft.trim() } as UserKeys);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleClear() {
+    setDraft("");
+    await updateUserKeys({ [spec.id]: "" } as UserKeys);
+    setResult(null);
+  }
+
+  return (
+    <div className="rounded-xl border border-line bg-white/[0.02] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-medium text-ink">{spec.label}</span>
+          {spec.required ? (
+            <span className="rounded-full border border-accent-line bg-accent-dim px-1.5 py-px text-[9px] uppercase tracking-[0.16em] text-accent">
+              Required
+            </span>
+          ) : (
+            <span className="rounded-full border border-line bg-white/[0.04] px-1.5 py-px text-[9px] uppercase tracking-[0.16em] text-muted">
+              Optional
+            </span>
+          )}
+        </div>
+        <a
+          href={spec.console}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="aa-link inline-flex items-center gap-1 text-[11px]"
+        >
+          Get key <ExternalLink className="size-3" />
+        </a>
+      </div>
+      <p className="mt-1 text-[11px] text-muted leading-relaxed">{spec.description}</p>
+
+      <div className="mt-2.5 flex gap-1.5">
+        <div className="relative flex-1">
+          <input
+            type={show ? "text" : "password"}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={spec.placeholder}
+            spellCheck={false}
+            autoComplete="off"
+            className="w-full rounded-md border border-line bg-bg px-2.5 py-1.5 pr-8 font-mono text-[12px] text-ink outline-none placeholder:text-muted/60 focus:border-accent-line"
+          />
+          <button
+            type="button"
+            onClick={() => setShow(!show)}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted hover:text-ink"
+            aria-label={show ? "Hide" : "Show"}
+          >
+            {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={handleTest}
+          disabled={testing || !draft.trim()}
+          className="rounded-md border border-line bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-ink/85 transition hover:border-accent-line hover:text-accent disabled:opacity-50"
+        >
+          {testing ? <Loader2 className="size-3 animate-spin" /> : "Test"}
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          className="rounded-md bg-accent px-2.5 py-1.5 text-[11px] font-medium text-[#15170a] transition hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+        </button>
+      </div>
+
+      {hasKey && !dirty && (
+        <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted">
+          <span className="font-mono">Saved: {maskKey(value)}</span>
+          <button
+            type="button"
+            onClick={handleClear}
+            className="inline-flex items-center gap-0.5 hover:text-danger"
+          >
+            <Trash2 className="size-3" />
+            Clear
+          </button>
+        </div>
+      )}
+
+      {result && (
+        <div
+          className={`mt-2 flex items-start gap-1.5 rounded-md px-2 py-1.5 text-[11px] ${
+            result.ok
+              ? "border border-accent-line bg-accent-dim text-ink"
+              : "border border-danger/30 bg-danger/[0.06] text-danger"
+          }`}
+        >
+          {result.ok ? (
+            <Check className="mt-px size-3 shrink-0 text-accent" />
+          ) : (
+            <AlertCircle className="mt-px size-3 shrink-0" />
+          )}
+          <span className="leading-relaxed">{result.message}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

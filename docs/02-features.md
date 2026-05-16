@@ -23,6 +23,9 @@ A "deferred" list at the bottom records what we considered and consciously didn'
 
 | Feature | One-line | Deep dive |
 |---|---|---|
+| **Settings page (BYO keys)** | `/settings` page on web + Keys section in extension options. Per-key Save + Test buttons. Keys stored in `localStorage` / `chrome.storage.local` and shipped per-request. Env vars are fallbacks. | [keys-settings.md](./features/keys-settings.md) |
+| **User profile + auto-learn** | A persistent profile of structured "extras" (work auth, salary, start date) + a learned-answers dictionary keyed by normalized question hash. Field-mapper consults both before falling to the LLM — zero tokens on repeat questions. Auto-populated when the user answers a skipped field in review mode. | [profile-learning.md](./features/profile-learning.md) |
+| **Skipped-required inline edit** | Required fields the agent couldn't answer become editable rows in the review-mode footer. "Save & fill" persists the answer to the profile AND injects a `stagehand.act()` into the running session via `/api/fill/[runId]`. | [profile-learning.md](./features/profile-learning.md) |
 | **Review-before-submit** | Default ON. Agent fills + uploads, then pauses. User clicks "Submit for real". | [review-mode.md](./features/review-mode.md) |
 | **Stop button** | Mid-run abort. `POST /api/stop/[runId]` flips a flag; runner checks between steps. | [review-mode.md](./features/review-mode.md) |
 | **Submit-for-real button** | While in review mode, the user clicks this to release the pause and let the agent submit. | [review-mode.md](./features/review-mode.md) |

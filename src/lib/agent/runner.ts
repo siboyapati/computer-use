@@ -37,6 +37,7 @@ import {
   finishRun,
   isStopRequested,
   isSubmitRequested,
+  drainFillRequests,
 } from "./events";
 import { mapField, type FormField } from "./field-mapper";
 import {
@@ -56,6 +57,14 @@ import {
   clickSubmit as ashbySubmit,
 } from "./adapters/ashby";
 import type { ATS, LLMProvider, Resume } from "./types";
+import {
+  normalizeKeys,
+  resolveAnthropic,
+  resolveGoogle,
+  resolveSteel,
+  type UserKeys,
+} from "./keys";
+import type { UserProfile } from "./profile-types";
 
 interface RunArgs {
   runId: string;
@@ -65,6 +74,17 @@ interface RunArgs {
   ats: ATS;
   provider: LLMProvider;
   reviewMode: boolean;
+  /**
+   * Optional per-request API key overrides. When present, used instead of
+   * the server's env vars. Never stored.
+   */
+  userKeys?: UserKeys;
+  /**
+   * Optional user profile (extras + learnedAnswers). The field-mapper
+   * consults these between the deterministic résumé tier and the LLM
+   * fallback. See profile-types.ts + features/field-mapping.md.
+   */
+  profile?: UserProfile;
 }
 
 const MAX_FIELDS_TO_FILL = 40;
@@ -76,17 +96,31 @@ class StoppedError extends Error {
   }
 }
 
-function resolveStagehandModel(provider: LLMProvider): { modelName: string; apiKey: string } {
+/**
+ * Resolve which model + API key to hand Stagehand for this run.
+ *
+ * For each provider, prefer the user-supplied key (`userKeys`) over the
+ * server env var. Both Claude Haiku 4.5 and Gemini 3 Flash are in
+ * Stagehand v3's `AVAILABLE_CUA_MODELS` list, so they can both drive the
+ * agent. We use Stagehand's act/extract path (more deterministic + cheaper)
+ * rather than the autonomous `stagehand.agent()` CUA loop.
+ */
+function resolveStagehandModel(
+  provider: LLMProvider,
+  userKeys?: UserKeys,
+): { modelName: string; apiKey: string } {
+  const keys = normalizeKeys(userKeys);
   if (provider === "google") {
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    const apiKey = resolveGoogle(keys);
     if (!apiKey) {
-      throw new Error("GOOGLE_GENERATIVE_AI_API_KEY is not set — cannot use the Gemini agent");
+      throw new Error(
+        "Gemini API key not configured. Add it on the Settings page or set GOOGLE_GENERATIVE_AI_API_KEY on the server.",
+      );
     }
     const model = process.env.GEMINI_MODEL || "gemini-3-flash-preview";
     return { modelName: `google/${model}`, apiKey };
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+  const apiKey = resolveAnthropic(keys);
   const model = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-haiku-4-5";
   return { modelName: `anthropic/${model}`, apiKey };
 }
@@ -117,15 +151,27 @@ function bail(runId: string) {
 }
 
 export async function runApplication(args: RunArgs): Promise<void> {
-  const { runId, resume, resumePdfBase64, jobUrl, ats, provider, reviewMode } = args;
+  const { runId, resume, resumePdfBase64, jobUrl, ats, provider, reviewMode, userKeys, profile } = args;
   const adapter = ADAPTERS[ats];
+  const normalizedKeys = normalizeKeys(userKeys);
 
   let session: Awaited<ReturnType<typeof createSession>> | null = null;
   let stagehand: Stagehand | null = null;
   let resumePdfPath: string | null = null;
+  let sessionApiKey: string | undefined;
+  // Track required fields the agent had no answer for. Surfaced in the
+  // live UI via `meta.skippedRequired` so the user knows what to manually
+  // fill before clicking "Submit for real".
+  const skippedRequired: string[] = [];
 
   try {
-    const { modelName, apiKey } = resolveStagehandModel(provider);
+    // Resolve keys inside the try block so missing-key failures are reported
+    // through the normal run error path instead of becoming unhandled
+    // background promise rejections.
+    const anthropicKey = resolveAnthropic(normalizedKeys);
+    const steelKey = resolveSteel(normalizedKeys);
+    sessionApiKey = steelKey;
+    const { modelName, apiKey } = resolveStagehandModel(provider, normalizedKeys);
     emit(
       runId,
       "started",
@@ -133,7 +179,7 @@ export async function runApplication(args: RunArgs): Promise<void> {
       { provider, modelName, reviewMode },
     );
 
-    session = await createSession();
+    session = await createSession(steelKey);
     bail(runId);
     updateMeta(runId, { liveUrl: session.sessionViewerUrl });
     emit(runId, "started", "Cloud browser session ready", {
@@ -197,11 +243,19 @@ export async function runApplication(args: RunArgs): Promise<void> {
     for (const field of fillable) {
       bail(runId);
       try {
-        const answer = await mapField(field, resume, jobUrl);
+        const answer = await mapField(field, resume, jobUrl, anthropicKey, profile);
         if (!answer.value) {
+          // The agent had no answer (résumé silent on this field + LLM
+          // fallback returned ""). For required fields, track them so the
+          // user can manually fix in review mode.
+          if (field.required) {
+            skippedRequired.push(field.label);
+            updateMeta(runId, { skippedRequired: [...skippedRequired] });
+          }
           emit(runId, "field_filled", `Skipped ${field.label} (no value)`, {
             label: field.label,
             skipped: true,
+            required: field.required,
           });
           continue;
         }
@@ -232,12 +286,16 @@ export async function runApplication(args: RunArgs): Promise<void> {
 
     if (reviewMode) {
       updateMeta(runId, { status: "awaiting_review" });
+      const skippedNote = skippedRequired.length
+        ? ` ${skippedRequired.length} required field${skippedRequired.length === 1 ? "" : "s"} need your input first — fix in the live browser, then submit.`
+        : "";
       emit(
         runId,
         "awaiting_review",
-        "Form filled — review and click 'Submit for real' in the dashboard to send",
+        `Form filled — review and click 'Submit for real' to send.${skippedNote}`,
+        { skippedRequired: [...skippedRequired] },
       );
-      const submitted = await waitForSubmitOrStop(runId, 5 * 60 * 1000);
+      const submitted = await waitForSubmitOrStop(runId, 5 * 60 * 1000, stagehand);
       bail(runId);
       if (!submitted) {
         emit(runId, "stopped", "No submit action within 5 minutes — stopping");
@@ -283,7 +341,7 @@ export async function runApplication(args: RunArgs): Promise<void> {
       }
     }
     if (session) {
-      releaseSession(session.id);
+      await releaseSession(session.id, sessionApiKey);
     }
     if (resumePdfPath) {
       try {
@@ -295,11 +353,47 @@ export async function runApplication(args: RunArgs): Promise<void> {
   }
 }
 
-async function waitForSubmitOrStop(runId: string, timeoutMs: number): Promise<boolean> {
+/**
+ * Park the runner during the `awaiting_review` state. Three exit
+ * conditions:
+ *   - User clicked Submit for real        → returns true
+ *   - User clicked Stop, or 5 min elapsed → returns false
+ *   - User queued a "Save & fill" instruction → we DON'T exit;
+ *     we drain + execute the fill via Stagehand, emit a field_filled
+ *     event, then keep waiting.
+ */
+async function waitForSubmitOrStop(
+  runId: string,
+  timeoutMs: number,
+  stagehand: Stagehand,
+): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (isStopRequested(runId)) return false;
     if (isSubmitRequested(runId)) return true;
+
+    // Drain any pending "Save & fill" requests submitted by the user
+    // from the live UI. Each one is executed via stagehand.act() so the
+    // field gets filled in the visible cloud browser.
+    const fills = drainFillRequests(runId);
+    for (const { label, value } of fills) {
+      try {
+        await stagehand.act(`Fill the "${label}" field with: ${value}`);
+        emit(runId, "field_filled", `Filled ${label} (you)`, {
+          label,
+          value: redact(value),
+          reasoning: "user-provided during review",
+        });
+      } catch (err) {
+        emit(
+          runId,
+          "error",
+          `Couldn't fill ${label}: ${err instanceof Error ? err.message : String(err)}`,
+          { label },
+        );
+      }
+    }
+
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;

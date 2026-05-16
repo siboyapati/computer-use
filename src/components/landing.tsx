@@ -57,6 +57,12 @@ export function Landing({
       try {
         const form = new FormData();
         form.append("file", file);
+        // If the user has configured an Anthropic key in Settings, attach
+        // it as a multipart text field so the parser uses their account.
+        // Loaded lazily here (not at module scope) so changes to Settings
+        // take effect without a page refresh.
+        const stored = (await import("@/lib/keys")).loadKeys();
+        if (stored.anthropic) form.append("anthropicKey", stored.anthropic);
         const res = await fetch("/api/parse-resume", { method: "POST", body: form });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));

@@ -2,30 +2,48 @@
  * Field mapper — given a single form field + the parsed résumé + the job
  * URL, return the value to fill into that field.
  *
- * Three-tier strategy, cheapest-first:
- *   1. Deterministic dictionary (regex on the label → résumé key).
- *      Zero tokens. Covers name/email/phone/LinkedIn/etc.
- *   2. EEO heuristic for demographic fields. Returns an explicit
- *      "decline" option if available, else empty string. NEVER falls
- *      back to a real demographic answer — that's a privacy violation.
- *   3. LLM fallback. One Claude call per question, with the résumé in a
- *      cacheable system block (cache_control: ephemeral) so 20 questions
- *      on the same form pay the résumé token cost once.
+ * Five-tier strategy, cheapest-first:
+ *   1.  Deterministic dictionary (regex on the label → résumé key).
+ *       Zero tokens. Covers name/email/phone/LinkedIn/etc.
+ *  1.5. Profile extras — structured ATS-specific fields the user
+ *       pre-populated on the Settings page (work auth, salary, start
+ *       date, etc). Zero tokens.
+ *  1.6. Learned answers — exact match on a normalized question key.
+ *       Populated automatically when the user types into a previously-
+ *       skipped field in review mode. Zero tokens.
+ *   2.  EEO heuristic for demographic fields. Returns an explicit
+ *       "decline" option if available, else empty string. NEVER falls
+ *       back to a real demographic answer — that's a privacy violation.
+ *   3.  LLM fallback. One Claude call per question, with the résumé in a
+ *       cacheable system block (cache_control: ephemeral) so 20 questions
+ *       on the same form pay the résumé token cost once.
  *
  * See docs/features/field-mapping.md for the full algorithm + verification.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import type { Resume } from "./types";
+import {
+  extraToString,
+  matchExtra,
+  normalizeQuestion,
+  type UserProfile,
+} from "./profile-types";
 
-let client: Anthropic | null = null;
+let defaultClient: Anthropic | null = null;
 
-function getClient(): Anthropic {
-  if (!client) {
+function getDefaultClient(): Anthropic {
+  if (!defaultClient) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-    client = new Anthropic({ apiKey });
+    defaultClient = new Anthropic({ apiKey });
   }
-  return client;
+  return defaultClient;
+}
+
+// Construct a fresh client when a per-request key is provided.
+function clientFor(apiKey?: string): Anthropic {
+  if (apiKey) return new Anthropic({ apiKey });
+  return getDefaultClient();
 }
 
 export interface FormField {
@@ -72,6 +90,7 @@ export async function answerCustomQuestion(
   field: FormField,
   resume: Resume,
   jobUrl: string,
+  apiKey?: string,
 ): Promise<string> {
   const model = process.env.ANTHROPIC_MODEL_DEFAULT || "claude-haiku-4-5";
   const isLong = field.type === "textarea";
@@ -83,7 +102,7 @@ export async function answerCustomQuestion(
 Candidate resume (JSON):
 ${JSON.stringify(resume, null, 2)}`;
 
-  const response = await getClient().messages.create({
+  const response = await clientFor(apiKey).messages.create({
     model,
     max_tokens: isLong ? 400 : 80,
     system: [
@@ -127,15 +146,102 @@ function findDeclineOption(options: string[] | undefined): string | undefined {
 }
 
 /**
- * Map a single form field to a value to fill in.
+ * Look up a profile-derived answer for this field (Tiers 1.5 + 1.6).
  *
- * Three tiers, ordered cheapest-first:
- *   1. Deterministic dictionary — regex on the label → key into the
- *      résumé. Zero LLM tokens. Covers name/email/phone/LinkedIn/etc.
- *   2. EEO heuristic — for demographic fields, return the explicit
- *      "decline" option or empty string. Privacy-respecting default.
- *   3. LLM fallback — single Claude call with the résumé in a cacheable
- *      system block, answer grounded in the résumé only.
+ * Priority order within the profile:
+ *   - learnedAnswers (exact normalized-question match) — the user already
+ *     answered this exact question on a previous run.
+ *   - extras (heuristic label → structured field match) — the user filled
+ *     in a known ATS field like "salary range" on the Settings page.
+ *
+ * Returns undefined when the profile has no relevant data.
+ */
+function profileAnswer(
+  field: FormField,
+  profile: UserProfile | undefined,
+): { value: string; reasoning: string } | undefined {
+  if (!profile) return undefined;
+  const learnedAnswers = profile.learnedAnswers ?? {};
+  const extras = profile.extras ?? {};
+
+  // 1.6: exact-match against the learnedAnswers dictionary.
+  const key = normalizeQuestion(field.label);
+  const learned = key ? findSavedAnswer(key, learnedAnswers) : undefined;
+  if (learned && learned.answer) {
+    const timesUsed = learned.timesUsed ?? 0;
+    return {
+      value: learned.answer,
+      reasoning: timesUsed > 0 ? `saved answer (used ${timesUsed}x before)` : "saved answer",
+    };
+  }
+
+  // 1.5: heuristic match against structured `extras`.
+  const extrasKey = matchExtra(field.label);
+  if (extrasKey) {
+    if (extrasKey === "salaryMin") {
+      // For salary-shaped questions, fall back to formatting the range
+      // if we have one.
+      const min = extras.salaryMin;
+      const max = extras.salaryMax;
+      const cur = extras.salaryCurrency || "USD";
+      if (min && max) {
+        return {
+          value: `${cur} ${min.toLocaleString()}–${max.toLocaleString()}`,
+          reasoning: "profile: salary range",
+        };
+      }
+      if (min) {
+        return {
+          value: `${cur} ${min.toLocaleString()}`,
+          reasoning: "profile: salary minimum",
+        };
+      }
+    }
+    const v = extraToString(extras[extrasKey]);
+    if (v) return { value: v, reasoning: `profile: ${extrasKey}` };
+  }
+
+  return undefined;
+}
+
+function findSavedAnswer(
+  fieldKey: string,
+  learnedAnswers: UserProfile["learnedAnswers"],
+) {
+  const exact = learnedAnswers[fieldKey];
+  if (exact) return exact;
+
+  for (const [savedKey, answer] of Object.entries(learnedAnswers)) {
+    if (!answer?.answer) continue;
+    if (isCompatibleSavedQuestion(fieldKey, savedKey)) return answer;
+  }
+  return undefined;
+}
+
+function isCompatibleSavedQuestion(fieldKey: string, savedKey: string): boolean {
+  if (!fieldKey || !savedKey) return false;
+  if (fieldKey === savedKey) return true;
+  if (savedKey.length >= 20 && fieldKey.includes(savedKey)) return true;
+  if (fieldKey.length >= 20 && savedKey.includes(fieldKey)) return true;
+
+  const patterns = [
+    /why.*(interest|join|work|role|company|opportun)/,
+    /(tell|anything).*about.*(yourself|you)/,
+    /(additional|anything).*information/,
+    /cover.*letter/,
+    /authorized.*work|work.*authorization|eligible.*work/,
+    /sponsor|visa.*support|immigration.*support/,
+    /salary|compensation|pay.*expect|expected.*pay/,
+    /when.*start|start.*date|availability/,
+    /how.*hear|where.*hear|how.*find/,
+  ];
+
+  return patterns.some((pattern) => pattern.test(fieldKey) && pattern.test(savedKey));
+}
+
+/**
+ * Map a single form field to a value to fill in. See file header for the
+ * full tier ordering.
  *
  * If the result is an empty string, the runner skips filling that field
  * (emits a "skipped" event so the user sees why).
@@ -144,11 +250,22 @@ export async function mapField(
   field: FormField,
   resume: Resume,
   jobUrl: string,
+  apiKey?: string,
+  profile?: UserProfile,
 ): Promise<FieldAnswer> {
+  // Tier 1: deterministic résumé key.
   const det = deterministicAnswer(field, resume);
   if (det) {
     return { label: field.label, value: det, reasoning: "matched resume directly" };
   }
+
+  // Tier 1.5 + 1.6: profile.
+  const profileHit = profileAnswer(field, profile);
+  if (profileHit) {
+    return { label: field.label, value: profileHit.value, reasoning: profileHit.reasoning };
+  }
+
+  // Tier 2: EEO heuristic.
   if (EEO_REGEX.test(field.label)) {
     const decline = findDeclineOption(field.options);
     return {
@@ -159,6 +276,8 @@ export async function mapField(
         : "EEO question — no decline option, left blank",
     };
   }
-  const value = await answerCustomQuestion(field, resume, jobUrl);
+
+  // Tier 3: LLM fallback.
+  const value = await answerCustomQuestion(field, resume, jobUrl, apiKey);
   return { label: field.label, value, reasoning: "generated from resume" };
 }

@@ -29,6 +29,14 @@ interface RunRecord {
   control: {
     stopRequested: boolean;
     submitRequested: boolean;
+    /**
+     * Inline fill requests submitted by the user during review mode.
+     * Each entry asks the running Stagehand session to fill a specific
+     * field. The runner polls + drains this list inside
+     * `waitForSubmitOrStop()` and emits a `field_filled` event for each
+     * one that completes.
+     */
+    fillRequests: Array<{ label: string; value: string }>;
   };
 }
 
@@ -60,7 +68,7 @@ export function createRun(meta: Omit<RunMetadata, "startedAt" | "finishedAt" | "
     meta: fullMeta,
     emitter,
     log: [],
-    control: { stopRequested: false, submitRequested: false },
+    control: { stopRequested: false, submitRequested: false, fillRequests: [] },
   };
   runs.set(meta.runId, record);
   return record;
@@ -127,6 +135,27 @@ export function isStopRequested(runId: string): boolean {
 
 export function isSubmitRequested(runId: string): boolean {
   return runs.get(runId)?.control.submitRequested ?? false;
+}
+
+/**
+ * Queue a fill instruction for the running agent. Used by `/api/fill/[runId]`
+ * during the review-mode pause. The runner drains this queue and executes
+ * each fill via stagehand.act() before resuming the submit step.
+ */
+export function requestFill(runId: string, label: string, value: string): boolean {
+  const record = runs.get(runId);
+  if (!record) return false;
+  if (!label.trim() || !value.trim()) return false;
+  record.control.fillRequests.push({ label: label.trim(), value: value.trim() });
+  return true;
+}
+
+/** Drain and return any pending fill requests for this run. */
+export function drainFillRequests(runId: string): Array<{ label: string; value: string }> {
+  const record = runs.get(runId);
+  if (!record) return [];
+  const out = record.control.fillRequests.splice(0);
+  return out;
 }
 
 /**

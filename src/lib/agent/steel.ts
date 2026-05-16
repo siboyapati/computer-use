@@ -1,14 +1,29 @@
 import Steel from "steel-sdk";
 
-let client: Steel | null = null;
+/**
+ * Thin wrapper around the Steel SDK.
+ *
+ * Each call accepts an optional `apiKey` so the runner can pass through a
+ * user-provided key. If omitted, falls back to `process.env.STEEL_API_KEY`.
+ *
+ * We construct a fresh client per call when a custom key is provided
+ * (don't reuse the cached default client). The SDK is cheap to instantiate.
+ */
 
-function getClient(): Steel {
-  if (!client) {
+let defaultClient: Steel | null = null;
+
+function getDefaultClient(): Steel {
+  if (!defaultClient) {
     const apiKey = process.env.STEEL_API_KEY;
     if (!apiKey) throw new Error("STEEL_API_KEY is not set");
-    client = new Steel({ steelAPIKey: apiKey });
+    defaultClient = new Steel({ steelAPIKey: apiKey });
   }
-  return client;
+  return defaultClient;
+}
+
+function clientFor(apiKey?: string): Steel {
+  if (apiKey) return new Steel({ steelAPIKey: apiKey });
+  return getDefaultClient();
 }
 
 export interface SteelSessionInfo {
@@ -18,8 +33,8 @@ export interface SteelSessionInfo {
   debugUrl: string;
 }
 
-export async function createSession(): Promise<SteelSessionInfo> {
-  const session = await getClient().sessions.create({
+export async function createSession(apiKey?: string): Promise<SteelSessionInfo> {
+  const session = await clientFor(apiKey).sessions.create({
     stealthConfig: {
       humanizeInteractions: true,
       autoCaptchaSolving: false,
@@ -36,9 +51,9 @@ export async function createSession(): Promise<SteelSessionInfo> {
   };
 }
 
-export async function releaseSession(id: string): Promise<void> {
+export async function releaseSession(id: string, apiKey?: string): Promise<void> {
   try {
-    await getClient().sessions.release(id);
+    await clientFor(apiKey).sessions.release(id);
   } catch {
     // best-effort
   }

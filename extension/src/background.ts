@@ -25,7 +25,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         sendResponse({ ok: false, error: "Unknown message type" });
         return;
       }
-      const { resume, pdfBase64, fileName, apiBase } = message;
+      const { resume, pdfBase64, fileName, apiBase, userKeys, profile } = message;
       if (!resume || !pdfBase64 || !apiBase) {
         sendResponse({ ok: false, error: "Missing resume / pdfBase64 / apiBase" });
         return;
@@ -37,6 +37,8 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         pdfBase64,
         fileName: fileName ?? "résumé.pdf",
         pairedAt: Date.now(),
+        userKeys,
+        profile,
       });
       // Tell content scripts to re-evaluate (in case the user already had a job tab open)
       try {

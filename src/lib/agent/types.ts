@@ -145,4 +145,10 @@ export interface RunMetadata {
   finishedAt: number | null;
   screenshotUrl: string | null;
   error: string | null;
+  /**
+   * Labels of REQUIRED form fields the agent couldn't answer (résumé silent,
+   * LLM fallback returned empty). Surfaced in review mode so the user can
+   * fix them manually in the live browser before clicking "Submit for real".
+   */
+  skippedRequired?: string[];
 }

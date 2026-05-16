@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import Link from "next/link";
 import { AnimatePresence } from "motion/react";
+import { Settings as SettingsIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Landing } from "@/components/landing";
 import { Confirm } from "@/components/confirm";
@@ -22,6 +24,7 @@ import {
   SAMPLE_FILE_NAME,
   loadSamplePdfBase64,
 } from "@/lib/sample-data";
+import { loadKeys, keysForRequest } from "@/lib/keys";
 
 type Action =
   | { type: "PARSED"; resume: AppState["resume"]; pdfBase64: string; fileName: string }
@@ -101,8 +104,15 @@ export default function Page() {
 
   // Hydrate from localStorage on first mount (client-only)
   useEffect(() => {
-    setStoredResume(loadResume());
-    setHistory(loadHistory());
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStoredResume(loadResume());
+      setHistory(loadHistory());
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Deep-link: if the URL has ?runId=..., jump straight to the live phase.
@@ -145,13 +155,14 @@ export default function Page() {
   // Persist parsed résumé so it survives refresh
   useEffect(() => {
     if (state.resume && state.pdfBase64 && state.fileName) {
-      saveResume({ resume: state.resume, pdfBase64: state.pdfBase64, fileName: state.fileName });
-      setStoredResume({
+      const nextStored = {
         resume: state.resume,
         pdfBase64: state.pdfBase64,
         fileName: state.fileName,
         storedAt: Date.now(),
-      });
+      };
+      saveResume({ resume: state.resume, pdfBase64: state.pdfBase64, fileName: state.fileName });
+      queueMicrotask(() => setStoredResume(nextStored));
     }
   }, [state.resume, state.pdfBase64, state.fileName]);
 
@@ -160,7 +171,7 @@ export default function Page() {
     if (!state.meta || !state.ats) return;
     if (state.meta.status !== "submitted" && state.meta.status !== "failed") return;
     recordRun(state.meta, state.ats);
-    setHistory(loadHistory());
+    queueMicrotask(() => setHistory(loadHistory()));
   }, [state.meta, state.ats]);
 
   useEffect(() => {
@@ -256,6 +267,13 @@ export default function Page() {
             onBack={() => dispatch({ type: "BACK_TO_LANDING" })}
             onStart={async (jobUrl: string, provider: LLMProvider, reviewMode: boolean) => {
               dispatch({ type: "START_PENDING" });
+              // Pull user-configured keys from localStorage (Settings page).
+              // The server falls back to its env vars if anything is omitted.
+              const userKeys = keysForRequest(loadKeys());
+              // Pull the user's profile (extras + learnedAnswers) so the
+              // agent reuses saved answers without re-asking. Lazy import
+              // so SSR builds don't choke on the localStorage access.
+              const profile = (await import("@/lib/profile")).loadProfile();
               const res = await fetch("/api/start", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
@@ -265,6 +283,8 @@ export default function Page() {
                   jobUrl,
                   provider,
                   reviewMode,
+                  userKeys,
+                  profile,
                 }),
               });
               if (!res.ok) {
@@ -299,11 +319,21 @@ export default function Page() {
 
 function Brand() {
   return (
-    <div className="pointer-events-none fixed left-6 top-5 z-30">
-      <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.28em] text-foreground/85">
-        <span className="font-display lowercase italic tracking-normal text-base">a/a</span>
-        <span className="hidden text-foreground/60 sm:inline">AutoApply</span>
+    <>
+      <div className="pointer-events-none fixed left-6 top-5 z-30">
+        <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.28em] text-foreground/85">
+          <span className="font-display lowercase italic tracking-normal text-base">a/a</span>
+          <span className="hidden text-foreground/60 sm:inline">AutoApply</span>
+        </div>
       </div>
-    </div>
+      <Link
+        href="/settings"
+        className="fixed right-6 top-5 z-30 inline-flex items-center justify-center rounded-full border border-border bg-card p-2 text-muted-foreground shadow-card transition hover:text-foreground hover:border-primary/40"
+        aria-label="Settings"
+        title="Settings — API keys"
+      >
+        <SettingsIcon className="size-4" />
+      </Link>
+    </>
   );
 }

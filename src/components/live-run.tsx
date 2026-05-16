@@ -2,11 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, ExternalLink, Loader2, Sparkles, Square, Send } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Loader2,
+  Sparkles,
+  Square,
+  Send,
+  AlertTriangle,
+} from "lucide-react";
 import Image from "next/image";
 import { EventLog } from "./event-log";
 import { toast } from "sonner";
 import type { AgentEvent, RunMetadata, RunStatus } from "@/lib/agent/types";
+import { recordAnswer } from "@/lib/profile";
 
 interface Props {
   runId: string;
@@ -89,7 +98,7 @@ export function LiveRun({ runId, liveUrl, events, meta, onRestart, onApplyAnothe
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[1.65fr_1fr]">
         <BrowserPane liveUrl={liveUrl} status={status} />
-        <LogPane events={events} status={status} />
+        <LogPane events={events} status={status} meta={meta} />
       </div>
 
       <AnimatePresence>
@@ -315,7 +324,15 @@ function BrowserChrome({ url }: { url: string | null }) {
   );
 }
 
-function LogPane({ events, status }: { events: AgentEvent[]; status: RunStatus }) {
+function LogPane({
+  events,
+  status,
+  meta,
+}: {
+  events: AgentEvent[];
+  status: RunStatus;
+  meta: RunMetadata | null;
+}) {
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -329,9 +346,10 @@ function LogPane({ events, status }: { events: AgentEvent[]; status: RunStatus }
         <EventLog events={events} />
       </div>
       {status === "awaiting_review" ? (
-        <div className="border-t border-amber-500/40 bg-amber-50 px-4 py-2 font-mono text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200/90">
-          ⏸ paused for review — click <span className="font-semibold">Submit for real</span> above
-        </div>
+        <SkippedRequiredFooter
+          runId={meta?.runId ?? null}
+          skipped={meta?.skippedRequired ?? []}
+        />
       ) : status !== "submitted" && status !== "failed" && status !== "stopped" ? (
         <div className="border-t border-border/60 px-4 py-2 font-mono text-[11px] text-muted-foreground">
           <span className="inline-block animate-pulse">▍</span> thinking
@@ -433,6 +451,139 @@ function Confetti() {
       ))}
       <style>{`@keyframes confetti-fall { 0% { transform: translateY(-20px) rotate(0deg); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(140px) rotate(540deg); opacity: 0; } }`}</style>
     </div>
+  );
+}
+
+/**
+ * Footer shown in the event log pane while the agent is paused at
+ * `awaiting_review`.
+ *
+ * When `skipped` is empty: simple "paused for review" hint.
+ *
+ * When `skipped` has entries: each label becomes a row with an inline
+ * input. Click "Save & fill" → POSTs to /api/fill/[runId] (which queues
+ * a stagehand.act() to fill it in the live browser) AND persists the
+ * answer to the user's profile via recordAnswer() so it auto-fills
+ * next time. Saved rows hide themselves after a brief confirmation.
+ */
+function SkippedRequiredFooter({
+  runId,
+  skipped,
+}: {
+  runId: string | null;
+  skipped: string[];
+}) {
+  const [hidden, setHidden] = useState<Record<string, true>>({});
+  const visible = skipped.filter((s) => !hidden[s]);
+
+  if (visible.length === 0) {
+    return (
+      <div className="border-t border-amber-400/50 bg-amber-50 px-4 py-2 font-mono text-[11px] text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200/90">
+        ⏸ paused for review — click <span className="font-semibold">Submit for real</span> above
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-amber-400/60 bg-amber-50 px-4 py-3 text-[11px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+      <div className="flex items-center gap-1.5 font-mono">
+        <AlertTriangle className="size-3" />
+        <span className="font-semibold">
+          {visible.length} required field{visible.length === 1 ? "" : "s"} need your input
+        </span>
+      </div>
+      <p className="mt-1 text-amber-800/85 dark:text-amber-200/75">
+        Type an answer and click Save. It fills in the live browser AND is remembered for next time.
+      </p>
+      <ul className="mt-2 flex flex-col gap-2">
+        {visible.map((label) => (
+          <SkippedRow
+            key={label}
+            runId={runId}
+            label={label}
+            onSaved={() => setHidden((h) => ({ ...h, [label]: true }))}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Single editable row inside SkippedRequiredFooter. Owns its own input
+ * state + pending state so each row resolves independently.
+ */
+function SkippedRow({
+  runId,
+  label,
+  onSaved,
+}: {
+  runId: string | null;
+  label: string;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!draft.trim() || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      // 1. Persist to profile so future runs reuse this answer.
+      recordAnswer(label, draft.trim());
+
+      // 2. If the run is still alive, queue a server-side fill so the
+      //    answer also appears in the running cloud browser.
+      if (runId) {
+        const res = await fetch(`/api/fill/${runId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label, value: draft.trim() }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `Fill failed (${res.status})`);
+        }
+      }
+
+      toast.success(`Saved — "${label}" filled in browser + remembered`);
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Couldn't save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="rounded-lg border border-amber-400/40 bg-white/60 p-2 dark:border-amber-500/30 dark:bg-amber-500/[0.04]">
+      <div className="truncate text-[12px] text-amber-900 dark:text-amber-100">{label}</div>
+      <div className="mt-1.5 flex gap-1.5">
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Your answer…"
+          disabled={busy}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void handleSave();
+          }}
+          className="min-w-0 flex-1 rounded-md border border-amber-400/40 bg-white px-2 py-1 text-[12px] text-foreground outline-none placeholder:text-muted-foreground focus:border-amber-500 disabled:opacity-60 dark:border-amber-500/30 dark:bg-amber-500/[0.06] dark:text-amber-50"
+        />
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!draft.trim() || busy}
+          className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-500 dark:text-[#15170a]"
+        >
+          {busy ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+          Save &amp; fill
+        </button>
+      </div>
+      {err && <div className="mt-1 text-[11px] text-destructive">{err}</div>}
+    </li>
   );
 }
 

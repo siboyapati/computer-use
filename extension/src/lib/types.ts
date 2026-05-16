@@ -45,6 +45,27 @@ export interface Resume {
   certifications: string[];
 }
 
+export interface UserKeys {
+  anthropic?: string;
+  google?: string;
+  steel?: string;
+}
+
+export interface UserProfile {
+  extras?: Record<string, unknown>;
+  learnedAnswers?: Record<
+    string,
+    {
+      answer: string;
+      fieldType?: string;
+      lastLabel?: string;
+      timesUsed?: number;
+      lastUsedAt?: number;
+    }
+  >;
+  updatedAt?: number;
+}
+
 export interface PairedConfig {
   paired: true;
   apiBase: string;
@@ -52,9 +73,20 @@ export interface PairedConfig {
   pdfBase64: string;
   fileName: string;
   pairedAt: number;
+  /**
+   * Per-extension API key overrides. Optional — if missing, the server
+   * uses its env vars. Populated from the web app Settings page during
+   * pairing.
+   */
+  userKeys?: UserKeys;
+  /**
+   * Saved application profile copied from the web app during pairing.
+   * Used server-side before LLM fallback to answer repeated questions.
+   */
+  profile?: UserProfile;
 }
 
-export type StoredConfig = PairedConfig | { paired: false };
+export type StoredConfig = PairedConfig | { paired: false; userKeys?: UserKeys };
 
 export interface PairMessage {
   type: "pair";
@@ -62,6 +94,8 @@ export interface PairMessage {
   pdfBase64: string;
   fileName: string;
   apiBase: string;
+  userKeys?: UserKeys;
+  profile?: UserProfile;
 }
 
 export interface ApplyMessage {

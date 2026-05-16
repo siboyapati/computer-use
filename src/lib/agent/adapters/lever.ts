@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { V3 as Stagehand } from "@browserbasehq/stagehand";
-import type { Resume } from "../types";
 import type { FormField } from "../field-mapper";
 
 const LeverFormSchema = z.object({

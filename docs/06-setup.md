@@ -31,7 +31,11 @@ This pulls Next.js, Stagehand (with its Playwright core peer dep), Steel SDK, An
 Copy the example file and fill it in:
 
 ```bash
+# macOS / Linux
 cp .env.local.example .env.local
+
+# Windows PowerShell
+Copy-Item .env.local.example .env.local
 ```
 
 Minimum required:
@@ -90,6 +94,12 @@ Cost: ~$0.01–$0.05 on Anthropic, ~1 minute of Steel browser-time. The script d
 
 ```bash
 npm run dev
+```
+
+Recommended quick check in another terminal:
+
+```bash
+npm run lint
 ```
 
 Opens at <http://localhost:3000>.

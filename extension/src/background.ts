@@ -10,7 +10,7 @@
  *      the live-run UI.
  */
 
-import { loadConfig, saveConfig } from "~lib/storage";
+import { loadConfig, saveActiveRun, saveConfig } from "~lib/storage";
 import { startApplication, liveRunUrl } from "~lib/api";
 import type { ApplyMessage, OpenOptionsMessage, PairMessage, StatusMessage } from "~lib/types";
 
@@ -77,6 +77,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return;
         }
         const result = await startApplication(config, message.jobUrl);
+        await saveActiveRun({
+          runId: result.runId,
+          jobUrl: message.jobUrl,
+          ats: result.ats,
+          liveUrl: result.liveUrl,
+          company: null,
+          status: "starting",
+          startedAt: Date.now(),
+          updatedAt: Date.now(),
+        });
         await chrome.tabs.create({
           url: liveRunUrl(config.apiBase, result.runId),
           active: true,

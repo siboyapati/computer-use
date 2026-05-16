@@ -257,14 +257,18 @@ export async function runApplication(args: RunArgs): Promise<void> {
             skipped: true,
             required: field.required,
             reasoning: answer.reasoning,
+            confidence: "manual",
           });
           continue;
         }
         await fillSingleField(stagehand, field, answer.value);
+        const confidence = confidenceForReasoning(answer.reasoning);
         emit(runId, "field_filled", `Filled ${field.label}`, {
           label: field.label,
           value: redact(answer.value),
           reasoning: answer.reasoning,
+          confidence,
+          reviewPriority: confidence === "low" || confidence === "medium",
         });
       } catch (err) {
         if (err instanceof StoppedError) throw err;
@@ -384,6 +388,7 @@ async function waitForSubmitOrStop(
           label,
           value: redact(value),
           reasoning: "user-provided during review",
+          confidence: "user",
         });
       } catch (err) {
         emit(
@@ -398,6 +403,13 @@ async function waitForSubmitOrStop(
     await new Promise((r) => setTimeout(r, 250));
   }
   return false;
+}
+
+function confidenceForReasoning(reasoning: string): "high" | "medium" | "low" {
+  const normalized = reasoning.toLowerCase();
+  if (normalized.includes("generated from resume")) return "low";
+  if (normalized.includes("semantic")) return "medium";
+  return "high";
 }
 
 async function fillSingleField(stagehand: Stagehand, field: FormField, value: string): Promise<void> {

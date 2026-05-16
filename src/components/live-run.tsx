@@ -333,6 +333,7 @@ function LogPane({
   status: RunStatus;
   meta: RunMetadata | null;
 }) {
+  const highlights = reviewHighlights(events);
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -345,6 +346,9 @@ function LogPane({
       <div className="min-h-0 flex-1">
         <EventLog events={events} />
       </div>
+      {status === "awaiting_review" && highlights.length > 0 && (
+        <ReviewHighlights items={highlights} />
+      )}
       {status === "awaiting_review" ? (
         <SkippedRequiredFooter
           runId={meta?.runId ?? null}
@@ -355,6 +359,69 @@ function LogPane({
           <span className="inline-block animate-pulse">▍</span> thinking
         </div>
       ) : null}
+    </div>
+  );
+}
+
+interface ReviewHighlight {
+  label: string;
+  confidence: "medium" | "low";
+  reasoning: string;
+  value?: string;
+}
+
+function reviewHighlights(events: AgentEvent[]): ReviewHighlight[] {
+  const byLabel = new Map<string, ReviewHighlight>();
+  for (const event of events) {
+    if (event.kind !== "field_filled") continue;
+    const data = event.data;
+    if (!data || data.skipped === true) continue;
+    const confidence = data.confidence;
+    if (confidence !== "medium" && confidence !== "low") continue;
+    const label = typeof data.label === "string" ? data.label : event.message;
+    const reasoning = typeof data.reasoning === "string" ? data.reasoning : "";
+    const value = typeof data.value === "string" ? data.value : undefined;
+    byLabel.set(label, { label, confidence, reasoning, value });
+  }
+  return Array.from(byLabel.values())
+    .sort((a, b) => confidenceRank(b.confidence) - confidenceRank(a.confidence))
+    .slice(0, 5);
+}
+
+function confidenceRank(confidence: ReviewHighlight["confidence"]): number {
+  return confidence === "low" ? 2 : 1;
+}
+
+function ReviewHighlights({ items }: { items: ReviewHighlight[] }) {
+  return (
+    <div className="border-t border-amber-300/60 bg-amber-50 px-4 py-3 text-[11px] text-amber-900 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100">
+      <div className="flex items-center gap-1.5 font-mono">
+        <AlertTriangle className="size-3" />
+        <span className="font-semibold">
+          Review {items.length} generated or semantic-match field{items.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-1.5">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="rounded-lg border border-amber-300/50 bg-white/60 px-2 py-1.5 dark:border-amber-500/25 dark:bg-amber-500/[0.04]"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[12px] font-medium text-amber-950 dark:text-amber-50">
+                {item.label}
+              </span>
+              <span className="shrink-0 rounded-full bg-amber-200/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-amber-900 dark:bg-amber-400/20 dark:text-amber-100">
+                {item.confidence === "low" ? "generated" : "semantic"}
+              </span>
+            </div>
+            <div className="mt-0.5 truncate text-amber-800/80 dark:text-amber-200/75">
+              {item.value ? `${item.value} · ` : ""}
+              {item.reasoning}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

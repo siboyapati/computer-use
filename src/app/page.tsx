@@ -16,6 +16,12 @@ import {
   clearResume,
   loadHistory,
   recordRun,
+  loadActiveRun,
+  saveActiveRun,
+  clearActiveRun,
+  activeRunFromMeta,
+  isTerminalRunStatus,
+  type ActiveRun,
   type HistoryItem,
   type StoredResume,
 } from "@/lib/storage";
@@ -101,6 +107,7 @@ export default function Page() {
   const sseRef = useRef<EventSource | null>(null);
   const [storedResume, setStoredResume] = useState<StoredResume | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
 
   // Hydrate from localStorage on first mount (client-only)
   useEffect(() => {
@@ -109,6 +116,32 @@ export default function Page() {
       if (cancelled) return;
       setStoredResume(loadResume());
       setHistory(loadHistory());
+      const storedActiveRun = loadActiveRun();
+      setActiveRun(storedActiveRun);
+      if (storedActiveRun) {
+        void (async () => {
+          try {
+            const res = await fetch(`/api/runs/${storedActiveRun.runId}`);
+            if (!res.ok) {
+              clearActiveRun();
+              if (!cancelled) setActiveRun(null);
+              return;
+            }
+            const body = (await res.json()) as { meta: RunMetadata };
+            if (cancelled) return;
+            if (isTerminalRunStatus(body.meta.status)) {
+              clearActiveRun();
+              setActiveRun(null);
+              return;
+            }
+            const nextActiveRun = activeRunFromMeta(body.meta);
+            saveActiveRun(nextActiveRun);
+            setActiveRun(nextActiveRun);
+          } catch {
+            // Leave the local hint alone if the server is temporarily unreachable.
+          }
+        })();
+      }
     });
     return () => {
       cancelled = true;
@@ -132,6 +165,11 @@ export default function Page() {
         }
         const body = (await res.json()) as { meta: RunMetadata };
         if (cancelled) return;
+        if (!isTerminalRunStatus(body.meta.status)) {
+          const nextActiveRun = activeRunFromMeta(body.meta);
+          saveActiveRun(nextActiveRun);
+          setActiveRun(nextActiveRun);
+        }
         dispatch({
           type: "STARTED",
           runId,
@@ -169,10 +207,47 @@ export default function Page() {
   // Record finished runs into history
   useEffect(() => {
     if (!state.meta || !state.ats) return;
-    if (state.meta.status !== "submitted" && state.meta.status !== "failed") return;
-    recordRun(state.meta, state.ats);
-    queueMicrotask(() => setHistory(loadHistory()));
+    if (isTerminalRunStatus(state.meta.status)) {
+      recordRun(state.meta, state.ats);
+      clearActiveRun();
+      queueMicrotask(() => {
+        setHistory(loadHistory());
+        setActiveRun(null);
+      });
+      return;
+    }
+    const nextActiveRun = activeRunFromMeta(state.meta);
+    saveActiveRun(nextActiveRun);
+    queueMicrotask(() => setActiveRun(nextActiveRun));
   }, [state.meta, state.ats]);
+
+  async function openActiveRun(run: ActiveRun) {
+    try {
+      const res = await fetch(`/api/runs/${run.runId}`);
+      if (!res.ok) throw new Error("Run is no longer available");
+      const body = (await res.json()) as { meta: RunMetadata };
+      if (isTerminalRunStatus(body.meta.status)) {
+        clearActiveRun();
+        setActiveRun(null);
+        toast.message("That run has already finished");
+        return;
+      }
+      const nextActiveRun = activeRunFromMeta(body.meta);
+      saveActiveRun(nextActiveRun);
+      setActiveRun(nextActiveRun);
+      dispatch({
+        type: "STARTED",
+        runId: body.meta.runId,
+        liveUrl: body.meta.liveUrl,
+        ats: body.meta.ats,
+      });
+      dispatch({ type: "META", meta: body.meta });
+    } catch {
+      clearActiveRun();
+      setActiveRun(null);
+      toast.error("Couldn't reopen that run — start a new one");
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -220,6 +295,14 @@ export default function Page() {
             key="landing"
             storedResume={storedResume}
             history={history}
+            activeRun={activeRun}
+            onOpenActiveRun={() => {
+              if (activeRun) void openActiveRun(activeRun);
+            }}
+            onDismissActiveRun={() => {
+              clearActiveRun();
+              setActiveRun(null);
+            }}
             onUseStoredResume={() => {
               if (!storedResume) return;
               dispatch({
@@ -292,6 +375,18 @@ export default function Page() {
                 throw new Error(body.error || `Start failed (${res.status})`);
               }
               const body = await res.json();
+              const nextActiveRun: ActiveRun = {
+                runId: body.runId,
+                jobUrl,
+                ats: body.ats,
+                liveUrl: body.liveUrl,
+                company: null,
+                status: "starting",
+                startedAt: Date.now(),
+                updatedAt: Date.now(),
+              };
+              saveActiveRun(nextActiveRun);
+              setActiveRun(nextActiveRun);
               dispatch({
                 type: "STARTED",
                 runId: body.runId,

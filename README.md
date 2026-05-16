@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AutoApply
 
-## Getting Started
+AutoApply is a vision-driven AI job application agent.
 
-First, run the development server:
+It helps you:
+
+- Parse a resume PDF into structured profile data.
+- Open a live cloud browser session on a supported ATS posting.
+- Fill job application fields with deterministic mapping plus model fallback.
+- Pause for review before submit (default), then submit on demand.
+- Trigger runs from either the web app or the Chrome extension.
+
+Supported ATS:
+
+- Lever (`jobs.lever.co`)
+- Greenhouse (`job-boards.greenhouse.io`)
+- Ashby (`jobs.ashbyhq.com`)
+
+## Repository layout
+
+- `src/` - Next.js web app (UI + API routes + runner)
+- `extension/` - Plasmo Chrome extension
+- `docs/` - product, architecture, feature deep-dives, and references
+
+Start at [docs/README.md](./docs/README.md) for full project documentation.
+
+## Tech stack
+
+- Next.js 16, React 19, TypeScript
+- Tailwind CSS v4 + shadcn/ui
+- Stagehand v3 + Steel.dev browser sessions
+- Anthropic (default) or Gemini (toggle)
+
+## Quick start
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+```bash
+cd extension
+npm install
+cd ..
+```
+
+### 2. Configure environment
+
+Create `.env.local` in the repo root (or copy from `.env.local.example`) and set:
+
+```env
+ANTHROPIC_API_KEY=sk-ant-...
+STEEL_API_KEY=ste_...
+# Optional: only needed when selecting Gemini provider
+GOOGLE_GENERATIVE_AI_API_KEY=...
+```
+
+See [docs/reference/env.md](./docs/reference/env.md) for all variables.
+
+### 3. Run the web app
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 4. Build the extension
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cd extension
+npm run build
+```
 
-## Learn More
+Load unpacked from `extension/build/chrome-mv3-prod/` via `chrome://extensions`.
 
-To learn more about Next.js, take a look at the following resources:
+## Common scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `npm run dev` - start Next.js dev server
+- `npm run build` - production build
+- `npm run start` - run production build
+- `npm run lint` - lint workspace
+- `npm run test:semantic` - semantic matching test script
+- `npm run spike -- "<job-url>"` - key/path smoke test against a live ATS URL
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## API overview
 
-## Deploy on Vercel
+Main endpoints:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `POST /api/parse-resume`
+- `POST /api/start`
+- `GET /api/events/[runId]` (SSE)
+- `GET /api/runs/[runId]`
+- `POST /api/stop/[runId]`
+- `POST /api/submit-now/[runId]`
+- `POST /api/test-keys`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Detailed contracts: [docs/reference/api.md](./docs/reference/api.md)
+
+## Deployment
+
+Deploy the web app as a long-running Node service (for example Railway). This project is not optimized for short-lived serverless limits on long ATS runs.
+
+After deployment:
+
+- Set production env vars on the server.
+- Point `extension/.env.production` to your deployed API base.
+- Rebuild and reload the extension.
+
+Detailed setup and deployment steps: [docs/06-setup.md](./docs/06-setup.md)

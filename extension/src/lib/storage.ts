@@ -1,6 +1,8 @@
-import type { PairedConfig, StoredConfig, UserKeys } from "./types";
+import type { ActiveRun, PairedConfig, RunMetadata, RunStatus, StoredConfig, UserKeys } from "./types";
 
 const KEY = "autoapply.config.v1";
+const KEY_ACTIVE_RUN = "autoapply.activeRun.v1";
+const ACTIVE_RUN_MAX_AGE_MS = 1000 * 60 * 60 * 2;
 
 export async function loadConfig(): Promise<StoredConfig> {
   return new Promise((resolve) => {
@@ -34,6 +36,62 @@ export async function clearConfig(): Promise<void> {
   return new Promise((resolve) => {
     chrome.storage.local.remove(KEY, () => resolve());
   });
+}
+
+export async function loadActiveRun(): Promise<ActiveRun | null> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(KEY_ACTIVE_RUN, (items) => {
+      const value = items?.[KEY_ACTIVE_RUN] as ActiveRun | undefined;
+      if (!value?.runId || !value.jobUrl || !value.ats || !value.status) {
+        resolve(null);
+        return;
+      }
+      if (
+        isTerminalRunStatus(value.status) ||
+        Date.now() - (value.updatedAt || value.startedAt || 0) > ACTIVE_RUN_MAX_AGE_MS
+      ) {
+        chrome.storage.local.remove(KEY_ACTIVE_RUN, () => resolve(null));
+        return;
+      }
+      resolve(value);
+    });
+  });
+}
+
+export async function saveActiveRun(run: ActiveRun): Promise<void> {
+  if (isTerminalRunStatus(run.status)) {
+    await clearActiveRun();
+    return;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.set(
+      { [KEY_ACTIVE_RUN]: { ...run, updatedAt: Date.now() } },
+      () => resolve(),
+    );
+  });
+}
+
+export async function clearActiveRun(): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove(KEY_ACTIVE_RUN, () => resolve());
+  });
+}
+
+export function activeRunFromMeta(meta: RunMetadata): ActiveRun {
+  return {
+    runId: meta.runId,
+    jobUrl: meta.jobUrl,
+    ats: meta.ats,
+    liveUrl: meta.liveUrl,
+    company: meta.company,
+    status: meta.status,
+    startedAt: meta.startedAt,
+    updatedAt: Date.now(),
+  };
+}
+
+export function isTerminalRunStatus(status: RunStatus): boolean {
+  return status === "submitted" || status === "failed" || status === "stopped";
 }
 
 /**

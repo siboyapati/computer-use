@@ -7,6 +7,16 @@ export type ATS = "lever" | "greenhouse" | "ashby";
 
 export type LLMProvider = "anthropic" | "google";
 
+export type RunStatus =
+  | "starting"
+  | "navigating"
+  | "filling"
+  | "awaiting_review"
+  | "submitting"
+  | "submitted"
+  | "failed"
+  | "stopped";
+
 export interface Resume {
   personal: {
     fullName: string;
@@ -104,6 +114,31 @@ export interface PairedConfig {
 }
 
 export type StoredConfig = PairedConfig | { paired: false; userKeys?: UserKeys };
+
+export interface ActiveRun {
+  runId: string;
+  jobUrl: string;
+  ats: ATS;
+  liveUrl: string | null;
+  company: string | null;
+  status: RunStatus;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface RunMetadata {
+  runId: string;
+  jobUrl: string;
+  ats: ATS;
+  liveUrl: string | null;
+  status: RunStatus;
+  company: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  screenshotUrl: string | null;
+  error: string | null;
+  skippedRequired?: string[];
+}
 
 export interface PairMessage {
   type: "pair";

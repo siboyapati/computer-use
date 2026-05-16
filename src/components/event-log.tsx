@@ -52,13 +52,14 @@ export function EventLog({ events }: Props) {
 
 function EventRow({ event }: { event: AgentEvent }) {
   const cfg = STYLES[event.kind];
+  const confidence = confidenceForEvent(event);
   return (
     <motion.li
       layout
       initial={{ opacity: 0, x: -6 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ type: "spring", stiffness: 380, damping: 30 }}
-      className="group flex items-start gap-2.5 rounded-md px-3 py-1.5 font-mono text-[12.5px] leading-relaxed hover:bg-accent/40"
+      className={`group flex items-start gap-2.5 rounded-md px-3 py-1.5 font-mono text-[12.5px] leading-relaxed hover:bg-accent/40 ${confidenceRowClass(confidence)}`}
     >
       <span className={`mt-[3px] shrink-0 ${cfg.color}`}>{cfg.icon}</span>
       <div className="min-w-0 flex-1">
@@ -67,6 +68,16 @@ function EventRow({ event }: { event: AgentEvent }) {
             {cfg.label}
           </span>
           {event.message}
+          {confidence === "low" && (
+            <span className="ml-2 rounded-full border border-amber-400/40 bg-amber-100 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              review
+            </span>
+          )}
+          {confidence === "medium" && (
+            <span className="ml-2 rounded-full border border-sky-400/35 bg-sky-100 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.12em] text-sky-800 dark:bg-sky-500/10 dark:text-sky-200">
+              check
+            </span>
+          )}
         </div>
         {typeof event.data?.value === "string" && event.data.value && (
           <div className="mt-0.5 truncate text-muted-foreground/70">
@@ -79,6 +90,23 @@ function EventRow({ event }: { event: AgentEvent }) {
       </span>
     </motion.li>
   );
+}
+
+function confidenceForEvent(event: AgentEvent): "low" | "medium" | null {
+  if (event.kind !== "field_filled") return null;
+  const confidence = event.data?.confidence;
+  if (confidence === "low" || confidence === "medium") return confidence;
+  return null;
+}
+
+function confidenceRowClass(confidence: "low" | "medium" | null): string {
+  if (confidence === "low") {
+    return "border-l-2 border-amber-400 bg-amber-50/70 dark:bg-amber-500/[0.06]";
+  }
+  if (confidence === "medium") {
+    return "border-l-2 border-sky-400 bg-sky-50/70 dark:bg-sky-500/[0.06]";
+  }
+  return "";
 }
 
 // Per-event-kind icon + label + colored chip. The color is split across

@@ -2,10 +2,10 @@
 
 import { useCallback, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Upload, FileText, Sparkles, Loader2, RotateCcw, X, Wand2 } from "lucide-react";
+import { Activity, ExternalLink, Upload, FileText, Sparkles, Loader2, RotateCcw, X, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RunHistoryStrip } from "./run-history";
-import type { HistoryItem, StoredResume } from "@/lib/storage";
+import type { ActiveRun, HistoryItem, StoredResume } from "@/lib/storage";
 
 interface Props {
   onParsed: (data: { resume: unknown; pdfBase64: string; fileName: string }) => void;
@@ -13,6 +13,9 @@ interface Props {
   onUseSample: () => Promise<void>;
   storedResume: StoredResume | null;
   history: HistoryItem[];
+  activeRun: ActiveRun | null;
+  onOpenActiveRun: () => void;
+  onDismissActiveRun: () => void;
   onUseStoredResume: () => void;
   onForgetStoredResume: () => void;
 }
@@ -23,6 +26,9 @@ export function Landing({
   onUseSample,
   storedResume,
   history,
+  activeRun,
+  onOpenActiveRun,
+  onDismissActiveRun,
   onUseStoredResume,
   onForgetStoredResume,
 }: Props) {
@@ -175,6 +181,14 @@ export function Landing({
         </motion.div>
       </div>
 
+      {activeRun && (
+        <ActiveRunBanner
+          run={activeRun}
+          onOpen={onOpenActiveRun}
+          onDismiss={onDismissActiveRun}
+        />
+      )}
+
       <div className="mt-10 flex items-center gap-6 text-xs uppercase tracking-[0.18em] text-muted-foreground">
         <Supports name="Lever" />
         <Dot />
@@ -184,6 +198,59 @@ export function Landing({
       </div>
 
       <RunHistoryStrip items={history} />
+    </motion.div>
+  );
+}
+
+function ActiveRunBanner({
+  run,
+  onOpen,
+  onDismiss,
+}: {
+  run: ActiveRun;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const label = run.company ?? hostnameOf(run.jobUrl);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-6 w-full rounded-2xl border border-primary/25 bg-primary/[0.06] p-4 text-left shadow-card"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <Activity className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">
+              Active run in progress
+            </div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              {label} · {statusLabel(run.status)} · started {relativeTime(run.startedAt)}
+            </div>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:opacity-90"
+          >
+            Open live run
+            <ExternalLink className="size-3" />
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-full p-1.5 text-muted-foreground transition hover:bg-background/60 hover:text-foreground"
+            aria-label="Dismiss active run"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      </div>
     </motion.div>
   );
 }
@@ -253,4 +320,36 @@ function Supports({ name }: { name: string }) {
 
 function Dot() {
   return <span className="size-1 rounded-full bg-foreground/30" />;
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Current application";
+  }
+}
+
+function statusLabel(status: ActiveRun["status"]): string {
+  const labels: Record<ActiveRun["status"], string> = {
+    starting: "starting",
+    navigating: "reading form",
+    filling: "filling",
+    awaiting_review: "awaiting review",
+    submitting: "submitting",
+    submitted: "submitted",
+    failed: "failed",
+    stopped: "stopped",
+  };
+  return labels[status];
+}
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }

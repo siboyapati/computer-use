@@ -1,4 +1,4 @@
-import type { ATS, PairedConfig } from "./types";
+import type { ATS, PairedConfig, RunMetadata } from "./types";
 
 export interface StartResponse {
   runId: string;
@@ -54,6 +54,18 @@ export async function testKey(
     body: JSON.stringify({ provider, key }),
   });
   return (await res.json()) as { ok: boolean; info?: string; error?: string };
+}
+
+export async function fetchRunMetadata(
+  apiBase: string,
+  runId: string,
+): Promise<RunMetadata | null> {
+  const res = await fetch(
+    `${apiBase.replace(/\/+$/, "")}/api/runs/${encodeURIComponent(runId)}`,
+  );
+  if (!res.ok) return null;
+  const body = (await res.json()) as { meta?: RunMetadata };
+  return body.meta ?? null;
 }
 
 export function liveRunUrl(apiBase: string, runId: string): string {

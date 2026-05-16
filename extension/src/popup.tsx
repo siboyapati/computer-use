@@ -1,23 +1,49 @@
 import { useEffect, useState } from "react";
-import { Check, Plug, ExternalLink, Loader2, Settings, Sparkles } from "lucide-react";
-import { loadConfig } from "~lib/storage";
+import { Activity, Check, Plug, ExternalLink, Loader2, Settings, Sparkles, X } from "lucide-react";
+import {
+  activeRunFromMeta,
+  clearActiveRun,
+  isTerminalRunStatus,
+  loadActiveRun,
+  loadConfig,
+  saveActiveRun,
+} from "~lib/storage";
 import { detectATS, isLikelyValidPostingUrl } from "~lib/detect";
-import type { StoredConfig } from "~lib/types";
+import { fetchRunMetadata, liveRunUrl } from "~lib/api";
+import type { ActiveRun, StoredConfig } from "~lib/types";
 import "./styles.css";
 
 function Popup() {
   const [config, setConfig] = useState<StoredConfig | null>(null);
+  const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
   const [activeTabUrl, setActiveTabUrl] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
-      const [c, tabs] = await Promise.all([
+      const [c, tabs, storedActiveRun] = await Promise.all([
         loadConfig(),
         chrome.tabs.query({ active: true, currentWindow: true }),
+        loadActiveRun(),
       ]);
+      let nextActiveRun = storedActiveRun;
+      if (c.paired && storedActiveRun) {
+        try {
+          const meta = await fetchRunMetadata(c.apiBase, storedActiveRun.runId);
+          if (!meta || isTerminalRunStatus(meta.status)) {
+            await clearActiveRun();
+            nextActiveRun = null;
+          } else {
+            nextActiveRun = activeRunFromMeta(meta);
+            await saveActiveRun(nextActiveRun);
+          }
+        } catch {
+          // Keep the local recovery hint if the server is temporarily unreachable.
+        }
+      }
       setConfig(c);
+      setActiveRun(nextActiveRun);
       setActiveTabUrl(tabs[0]?.url ?? null);
     })();
   }, []);
@@ -27,6 +53,20 @@ function Popup() {
 
   function openOptions() {
     chrome.runtime.openOptionsPage().catch(() => {});
+  }
+
+  function openActiveRun() {
+    if (!config?.paired || !activeRun) return;
+    chrome.tabs.create({
+      url: liveRunUrl(config.apiBase, activeRun.runId),
+      active: true,
+    }).catch(() => {});
+    window.close();
+  }
+
+  async function dismissActiveRun() {
+    await clearActiveRun();
+    setActiveRun(null);
   }
 
   async function handleApply() {
@@ -96,6 +136,41 @@ function Popup() {
         <div className="mt-0.5 text-[11px] text-muted truncate">{config.fileName}</div>
       </div>
 
+      {activeRun && (
+        <div className="rounded-2xl border border-accent-line bg-accent-dim px-3.5 py-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-accent">
+                <Activity className="size-3" />
+                Active run
+              </div>
+              <div className="mt-1 truncate text-[13px] font-medium text-ink">
+                {activeRun.company ?? hostnameOf(activeRun.jobUrl)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-sub">
+                {statusLabel(activeRun.status)} · started {relativeTime(activeRun.startedAt)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void dismissActiveRun()}
+              className="rounded-full p-1 text-muted transition hover:text-ink"
+              aria-label="Dismiss active run"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={openActiveRun}
+            className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-accent text-[#15170a] font-medium px-3 py-2 text-[12px] transition hover:opacity-90"
+          >
+            Open live run
+            <ExternalLink className="size-3" />
+          </button>
+        </div>
+      )}
+
       {/* Active-tab apply CTA */}
       {isPosting ? (
         <div className="flex flex-col gap-2">
@@ -161,6 +236,38 @@ function Brand() {
       <span className="text-[10px] uppercase tracking-[0.28em] text-sub">AutoApply</span>
     </div>
   );
+}
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Current application";
+  }
+}
+
+function statusLabel(status: ActiveRun["status"]): string {
+  const labels: Record<ActiveRun["status"], string> = {
+    starting: "starting",
+    navigating: "reading form",
+    filling: "filling",
+    awaiting_review: "awaiting review",
+    submitting: "submitting",
+    submitted: "submitted",
+    failed: "failed",
+    stopped: "stopped",
+  };
+  return labels[status];
+}
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 export default Popup;
